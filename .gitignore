@@ -11,7 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
-.env
+
+# .env fica versionado de propósito: contém só valores VITE_ (chave anon
+# do Supabase), que são públicos por design e o Lovable precisa deles
+# commitados no repo para gerar o build/preview. Nunca coloque a chave
+# service_role/secret aqui.
 
 # Editor directories and files
 .vscode/*

@@ -42,8 +42,12 @@ coisa descrita abaixo).
 
 5. Reinicie `npm run dev`.
 
-> O `.env` não é versionado (está no `.gitignore`). Cada pessoa que rodar
-> o projeto localmente precisa do seu próprio arquivo.
+> **O `.env` É versionado de propósito** (não está no `.gitignore`). Ele só
+> guarda a URL do projeto e a chave `anon`/`public`, que são feitas para
+> ficar expostas no navegador (a segurança real vem das políticas de RLS
+> no banco) — e o Lovable exige que valores `VITE_*` estejam commitados no
+> `.env` para conseguir gerar o build/preview. **Nunca** coloque a chave
+> `service_role`/`secret` em lugar nenhum do frontend.
 
 ## 3. Modelo de dados
 
@@ -83,3 +87,8 @@ Como o projeto usa a stack padrão do Lovable (Vite + React + TS +
 Tailwind + shadcn/ui + Supabase), basta importar este repositório em um
 novo projeto Lovable e conectar o mesmo projeto Supabase (ou deixar o
 Lovable criar um novo e rodar a migration de novo por lá).
+
+No Lovable, os valores `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` vão
+no arquivo `.env` do projeto (editável pelo próprio Lovable), **não** na
+aba "Secrets" — o Lovable recusa nomes `VITE_*` em Secrets porque essa
+aba é só para chaves de backend que nunca podem chegar ao navegador.
