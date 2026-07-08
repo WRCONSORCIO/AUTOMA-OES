@@ -24,14 +24,19 @@ export function DashboardPage() {
 
   const stats = useMemo(() => {
     const lista = cartas ?? []
-    const emEstoque = lista.filter((c) => c.status === "estoque")
+    // "Em estoque" só conta cartas que a empresa realmente comprou (tipo
+    // compra_venda). Intermediação nunca passa pelo nosso caixa como
+    // estoque — é só uma indicação direta entre vendedor e comprador.
+    const emEstoque = lista.filter(
+      (c) => c.status === "estoque" && c.tipo_negociacao === "compra_venda"
+    )
     const vendidas = lista.filter((c) => c.status === "vendida")
     const intermediacoes = lista.filter((c) => c.tipo_negociacao === "intermediacao")
     const lucroTotal = vendidas.reduce((acc, c) => acc + (c.lucro ?? 0), 0)
     const valorEmEstoque = emEstoque.reduce((acc, c) => acc + c.valor_compra, 0)
 
     return {
-      totalCompradas: lista.length,
+      totalNegociadas: lista.length,
       emEstoqueQtd: emEstoque.length,
       valorEmEstoque,
       vendidasQtd: vendidas.length,
@@ -70,8 +75,8 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <Card>
           <CardContent>
-            <CardTitle>Compradas</CardTitle>
-            <p className="mt-1 text-2xl font-semibold">{stats.totalCompradas}</p>
+            <CardTitle>Negociadas</CardTitle>
+            <p className="mt-1 text-2xl font-semibold">{stats.totalNegociadas}</p>
           </CardContent>
         </Card>
         <Card>

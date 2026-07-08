@@ -20,13 +20,17 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { formatCurrency, formatDate } from "@/lib/format"
-import { useCartas } from "@/hooks/useCartas"
-import type { CartaComVendedor } from "@/types/database"
+import { useCartas, useUpdateCarta } from "@/hooks/useCartas"
+import { useVendedores } from "@/hooks/useVendedores"
+import type { CartaComVendedor, CartaInput } from "@/types/database"
+import { CartaFormDialog } from "@/pages/cartas/CartaFormDialog"
+import { toast } from "sonner"
 
 type TipoTransacao = "Compra" | "Venda" | "Intermediação"
 
 interface Transacao {
   id: string
+  carta: CartaComVendedor
   data: string
   tipo: TipoTransacao
   descricao: string
@@ -41,39 +45,44 @@ const MESES = [
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ]
 
+/**
+ * Uma linha por carta (não uma por evento): compra e venda ficam no mesmo
+ * registro, então Entrada - Saída sempre bate com o Resultado exibido.
+ */
 function toTransacoes(cartas: CartaComVendedor[]): Transacao[] {
-  const rows: Transacao[] = []
-
-  for (const carta of cartas) {
-    rows.push({
-      id: `${carta.id}-compra`,
-      data: carta.data_compra,
-      tipo: "Compra",
-      descricao: `Compra de ${carta.cliente_vendedor_nome} — ${carta.administradora}`,
-      vendedor: carta.vendedor?.nome ?? "—",
-      entrada: 0,
-      saida: carta.valor_compra,
-      resultado: -carta.valor_compra,
-    })
-
-    if (carta.status === "vendida" && carta.data_venda) {
+  return cartas
+    .map((carta): Transacao => {
+      const vendida = carta.status === "vendida"
       const intermediacao = carta.tipo_negociacao === "intermediacao"
-      rows.push({
-        id: `${carta.id}-venda`,
-        data: carta.data_venda,
-        tipo: intermediacao ? "Intermediação" : "Venda",
-        descricao: intermediacao
-          ? `Intermediação ${carta.cliente_vendedor_nome} — ${carta.administradora}`
-          : `Venda para ${carta.cliente_comprador_nome} — ${carta.codigo}`,
-        vendedor: carta.vendedor?.nome ?? "—",
-        entrada: carta.valor_venda ?? 0,
-        saida: carta.comissao_vendedor,
-        resultado: carta.lucro ?? 0,
-      })
-    }
-  }
 
-  return rows.sort((a, b) => (a.data < b.data ? 1 : -1))
+      const tipo: TipoTransacao = !vendida
+        ? "Compra"
+        : intermediacao
+          ? "Intermediação"
+          : "Venda"
+
+      const entrada = vendida ? (carta.valor_venda ?? 0) : 0
+      const saida = vendida ? carta.valor_compra + carta.comissao_vendedor : carta.valor_compra
+
+      const descricao = !vendida
+        ? `Compra de ${carta.cliente_vendedor_nome} — ${carta.administradora}`
+        : intermediacao
+          ? `Intermediação ${carta.cliente_vendedor_nome} — ${carta.administradora}`
+          : `Venda para ${carta.cliente_comprador_nome} — ${carta.codigo}`
+
+      return {
+        id: carta.id,
+        carta,
+        data: vendida && carta.data_venda ? carta.data_venda : carta.data_compra,
+        tipo,
+        descricao,
+        vendedor: carta.vendedor?.nome ?? "—",
+        entrada,
+        saida,
+        resultado: entrada - saida,
+      }
+    })
+    .sort((a, b) => (a.data < b.data ? 1 : -1))
 }
 
 const TIPO_BADGE_VARIANT: Record<TipoTransacao, "secondary" | "success" | "outline"> = {
@@ -84,11 +93,14 @@ const TIPO_BADGE_VARIANT: Record<TipoTransacao, "secondary" | "success" | "outli
 
 export function FinanceiroPage() {
   const { data: cartas, isLoading } = useCartas()
+  const { data: vendedores } = useVendedores()
+  const updateCarta = useUpdateCarta()
 
   const [busca, setBusca] = useState("")
   const [tipo, setTipo] = useState<"todos" | TipoTransacao>("todos")
   const [mes, setMes] = useState("todos")
   const [ano, setAno] = useState("todos")
+  const [cartaSelecionada, setCartaSelecionada] = useState<CartaComVendedor | null>(null)
 
   const todasTransacoes = useMemo(() => toTransacoes(cartas ?? []), [cartas])
 
@@ -117,6 +129,18 @@ export function FinanceiroPage() {
     },
     { entradas: 0, saidas: 0, resultado: 0 }
   )
+
+  async function handleSubmit(input: CartaInput) {
+    if (!cartaSelecionada) return
+    try {
+      await updateCarta.mutateAsync({ id: cartaSelecionada.id, input })
+      toast.success("Carta atualizada.")
+      setCartaSelecionada(null)
+    } catch (err) {
+      toast.error("Não foi possível salvar a carta.")
+      console.error(err)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -236,7 +260,11 @@ export function FinanceiroPage() {
               </TableRow>
             )}
             {filtradas.map((t) => (
-              <TableRow key={t.id}>
+              <TableRow
+                key={t.id}
+                className="cursor-pointer"
+                onClick={() => setCartaSelecionada(t.carta)}
+              >
                 <TableCell>{formatDate(t.data)}</TableCell>
                 <TableCell>
                   <Badge variant={TIPO_BADGE_VARIANT[t.tipo]}>{t.tipo}</Badge>
@@ -286,6 +314,15 @@ export function FinanceiroPage() {
       <p className="text-center text-sm text-muted-foreground">
         {filtradas.length} transação(ões) encontrada(s)
       </p>
+
+      <CartaFormDialog
+        open={cartaSelecionada !== null}
+        onOpenChange={(open) => !open && setCartaSelecionada(null)}
+        editing={cartaSelecionada}
+        vendedores={vendedores ?? []}
+        onSubmit={handleSubmit}
+        isSubmitting={updateCarta.isPending}
+      />
     </div>
   )
 }
