@@ -1,5 +1,6 @@
 export type TipoNegociacao = "compra_venda" | "intermediacao"
 export type StatusCarta = "estoque" | "vendida"
+export type TipoPessoa = "fisica" | "juridica"
 
 export interface Vendedor {
   id: string
@@ -13,6 +14,22 @@ export interface Vendedor {
 
 export type VendedorInput = Pick<Vendedor, "nome" | "telefone" | "email" | "ativo">
 
+export interface Cliente {
+  id: string
+  nome: string
+  documento: string
+  tipo_pessoa: TipoPessoa
+  telefone: string | null
+  email: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ClienteInput = Pick<
+  Cliente,
+  "nome" | "documento" | "tipo_pessoa" | "telefone" | "email"
+>
+
 export interface Carta {
   id: string
   codigo: string
@@ -20,10 +37,8 @@ export interface Carta {
   tipo_negociacao: TipoNegociacao
   status: StatusCarta
   vendedor_id: string | null
-  cliente_vendedor_nome: string
-  cliente_vendedor_documento: string
-  cliente_comprador_nome: string | null
-  cliente_comprador_documento: string | null
+  cliente_vendedor_id: string
+  cliente_comprador_id: string | null
   valor_carta: number
   valor_compra: number
   valor_venda: number | null
@@ -44,7 +59,11 @@ export type CartaInput = Omit<
   "id" | "codigo" | "lucro" | "created_at" | "updated_at"
 >
 
-/** Uma carta "com vendedor" já com o relacionamento carregado (join). */
-export interface CartaComVendedor extends Carta {
+type ClienteResumo = Pick<Cliente, "id" | "nome" | "documento" | "tipo_pessoa">
+
+/** Uma carta já com vendedor interno e clientes (vendedor/comprador) carregados (join). */
+export interface CartaComRelacoes extends Carta {
   vendedor: Pick<Vendedor, "id" | "nome"> | null
+  cliente_vendedor: ClienteResumo | null
+  cliente_comprador: ClienteResumo | null
 }

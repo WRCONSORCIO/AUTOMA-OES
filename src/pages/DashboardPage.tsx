@@ -164,7 +164,7 @@ export function DashboardPage() {
                       {carta.codigo} · {carta.administradora}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {carta.cliente_vendedor_nome} · {formatDate(carta.data_compra)}
+                      {carta.cliente_vendedor?.nome} · {formatDate(carta.data_compra)}
                     </p>
                   </div>
                   <Badge variant={carta.status === "vendida" ? "success" : "secondary"}>

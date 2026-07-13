@@ -22,7 +22,8 @@ import {
 import { formatCurrency, formatDate } from "@/lib/format"
 import { useCartas, useUpdateCarta } from "@/hooks/useCartas"
 import { useVendedores } from "@/hooks/useVendedores"
-import type { CartaComVendedor, CartaInput } from "@/types/database"
+import { useClientes } from "@/hooks/useClientes"
+import type { CartaComRelacoes, CartaInput } from "@/types/database"
 import { CartaFormDialog } from "@/pages/cartas/CartaFormDialog"
 import { toast } from "sonner"
 
@@ -30,7 +31,7 @@ type TipoTransacao = "Compra" | "Venda" | "Intermediação"
 
 interface Transacao {
   id: string
-  carta: CartaComVendedor
+  carta: CartaComRelacoes
   data: string
   tipo: TipoTransacao
   descricao: string
@@ -49,7 +50,7 @@ const MESES = [
  * Uma linha por carta (não uma por evento): compra e venda ficam no mesmo
  * registro, então Entrada - Saída sempre bate com o Resultado exibido.
  */
-function toTransacoes(cartas: CartaComVendedor[]): Transacao[] {
+function toTransacoes(cartas: CartaComRelacoes[]): Transacao[] {
   return cartas
     .map((carta): Transacao => {
       const vendida = carta.status === "vendida"
@@ -65,10 +66,10 @@ function toTransacoes(cartas: CartaComVendedor[]): Transacao[] {
       const saida = vendida ? carta.valor_compra + carta.comissao_vendedor : carta.valor_compra
 
       const descricao = !vendida
-        ? `Compra de ${carta.cliente_vendedor_nome} — ${carta.administradora}`
+        ? `Compra de ${carta.cliente_vendedor?.nome} — ${carta.administradora}`
         : intermediacao
-          ? `Intermediação ${carta.cliente_vendedor_nome} — ${carta.administradora}`
-          : `Venda para ${carta.cliente_comprador_nome} — ${carta.codigo}`
+          ? `Intermediação ${carta.cliente_vendedor?.nome} — ${carta.administradora}`
+          : `Venda para ${carta.cliente_comprador?.nome} — ${carta.codigo}`
 
       return {
         id: carta.id,
@@ -94,13 +95,14 @@ const TIPO_BADGE_VARIANT: Record<TipoTransacao, "secondary" | "success" | "outli
 export function FinanceiroPage() {
   const { data: cartas, isLoading } = useCartas()
   const { data: vendedores } = useVendedores()
+  const { data: clientes } = useClientes()
   const updateCarta = useUpdateCarta()
 
   const [busca, setBusca] = useState("")
   const [tipo, setTipo] = useState<"todos" | TipoTransacao>("todos")
   const [mes, setMes] = useState("todos")
   const [ano, setAno] = useState("todos")
-  const [cartaSelecionada, setCartaSelecionada] = useState<CartaComVendedor | null>(null)
+  const [cartaSelecionada, setCartaSelecionada] = useState<CartaComRelacoes | null>(null)
 
   const todasTransacoes = useMemo(() => toTransacoes(cartas ?? []), [cartas])
 
@@ -320,6 +322,7 @@ export function FinanceiroPage() {
         onOpenChange={(open) => !open && setCartaSelecionada(null)}
         editing={cartaSelecionada}
         vendedores={vendedores ?? []}
+        clientes={clientes ?? []}
         onSubmit={handleSubmit}
         isSubmitting={updateCarta.isPending}
       />

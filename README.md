@@ -22,11 +22,16 @@ coisa descrita abaixo).
 ## 2. Criando o banco no Supabase
 
 1. Crie uma conta e um projeto gratuito em [supabase.com](https://supabase.com).
-2. No painel do projeto, abra **SQL Editor** e rode o conteúdo do arquivo
-   [`supabase/migrations/0001_init.sql`](./supabase/migrations/0001_init.sql).
-   Isso cria as tabelas `vendedores` e `cartas`, os índices, o gerador
-   automático de código (`CART-0001`, `CART-0002`, ...) e a coluna de
-   lucro calculada automaticamente.
+2. No painel do projeto, abra **SQL Editor** e rode, **nesta ordem**, o
+   conteúdo de cada arquivo em [`supabase/migrations`](./supabase/migrations):
+   - [`0001_init.sql`](./supabase/migrations/0001_init.sql): cria as
+     tabelas `vendedores` e `cartas`, os índices, o gerador automático de
+     código (`CART-0001`, `CART-0002`, ...) e a coluna de lucro calculada
+     automaticamente.
+   - [`0002_clientes.sql`](./supabase/migrations/0002_clientes.sql): cria
+     a tabela `clientes` (pessoa física/jurídica) e migra os dados que já
+     existirem em `cartas` para ela, ligando cada carta ao cliente
+     correspondente.
 3. Em **Project Settings → API**, copie a **Project URL** e a chave
    **anon public**.
 4. Copie `.env.example` para `.env` e preencha:
@@ -51,13 +56,17 @@ coisa descrita abaixo).
 
 ## 3. Modelo de dados
 
-Tudo gira em torno da tabela `cartas`, que representa o ciclo completo de
-uma carta contemplada:
+A tabela `clientes` guarda pessoas físicas ou jurídicas (nome, CPF/CNPJ,
+telefone, e-mail) de forma centralizada — a mesma pessoa é reaproveitada
+em negociações futuras (o formulário de carta busca por nome ou
+CPF/CNPJ e autocompleta, ou cadastra na hora se for alguém novo).
 
-- **Cliente (dono atual)**: `cliente_vendedor_nome` / `cliente_vendedor_documento`
-  — quem vendeu a carta para a empresa.
-- **Comprador**: `cliente_comprador_nome` / `cliente_comprador_documento`
-  — preenchido quando a carta é vendida.
+Já `cartas` representa o ciclo completo de uma carta contemplada:
+
+- **Cliente (dono atual)**: `cliente_vendedor_id` — referência ao cliente
+  que vendeu a carta para a empresa.
+- **Comprador**: `cliente_comprador_id` — referência ao cliente que
+  comprou, preenchida quando a carta é vendida.
 - **Valores**: `valor_carta`, `valor_compra` (o que pagamos), `valor_venda`
   (o que recebemos), `valor_parcela`, `parcelas_pagas`, `parcelas_a_pagar`.
 - **Comissão**: `comissao_vendedor`, vinculada a um `vendedor_id`

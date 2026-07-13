@@ -24,7 +24,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { useCartas, useCreateCarta, useDeleteCarta, useUpdateCarta } from "@/hooks/useCartas"
 import { useVendedores } from "@/hooks/useVendedores"
-import type { CartaComVendedor, CartaInput } from "@/types/database"
+import { useClientes } from "@/hooks/useClientes"
+import type { CartaComRelacoes, CartaInput } from "@/types/database"
 import { CartaFormDialog } from "@/pages/cartas/CartaFormDialog"
 
 type FiltroAba = "todas" | "estoque" | "vendida" | "intermediacao"
@@ -32,6 +33,7 @@ type FiltroAba = "todas" | "estoque" | "vendida" | "intermediacao"
 export function CartasPage() {
   const { data: cartas, isLoading } = useCartas()
   const { data: vendedores } = useVendedores()
+  const { data: clientes } = useClientes()
   const createCarta = useCreateCarta()
   const updateCarta = useUpdateCarta()
   const deleteCarta = useDeleteCarta()
@@ -41,7 +43,7 @@ export function CartasPage() {
   const [administradoraFiltro, setAdministradoraFiltro] = useState("todas")
 
   const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState<CartaComVendedor | null>(null)
+  const [editing, setEditing] = useState<CartaComRelacoes | null>(null)
 
   const administradoras = useMemo(() => {
     const set = new Set((cartas ?? []).map((c) => c.administradora))
@@ -63,10 +65,10 @@ export function CartasPage() {
         const alvo = [
           carta.codigo,
           carta.administradora,
-          carta.cliente_vendedor_nome,
-          carta.cliente_vendedor_documento,
-          carta.cliente_comprador_nome,
-          carta.cliente_comprador_documento,
+          carta.cliente_vendedor?.nome,
+          carta.cliente_vendedor?.documento,
+          carta.cliente_comprador?.nome,
+          carta.cliente_comprador?.documento,
           carta.vendedor?.nome,
         ]
           .filter(Boolean)
@@ -84,7 +86,7 @@ export function CartasPage() {
     setOpen(true)
   }
 
-  function openEdit(carta: CartaComVendedor) {
+  function openEdit(carta: CartaComRelacoes) {
     setEditing(carta)
     setOpen(true)
   }
@@ -105,7 +107,7 @@ export function CartasPage() {
     }
   }
 
-  async function handleDelete(carta: CartaComVendedor) {
+  async function handleDelete(carta: CartaComRelacoes) {
     if (!confirm(`Excluir a carta ${carta.codigo}?`)) return
     try {
       await deleteCarta.mutateAsync(carta.id)
@@ -212,18 +214,18 @@ export function CartasPage() {
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col">
-                    <span>{carta.cliente_vendedor_nome}</span>
+                    <span>{carta.cliente_vendedor?.nome}</span>
                     <span className="text-xs text-muted-foreground">
-                      {carta.cliente_vendedor_documento}
+                      {carta.cliente_vendedor?.documento}
                     </span>
                   </div>
                 </TableCell>
                 <TableCell>
-                  {carta.cliente_comprador_nome ? (
+                  {carta.cliente_comprador ? (
                     <div className="flex flex-col">
-                      <span>{carta.cliente_comprador_nome}</span>
+                      <span>{carta.cliente_comprador.nome}</span>
                       <span className="text-xs text-muted-foreground">
-                        {carta.cliente_comprador_documento}
+                        {carta.cliente_comprador.documento}
                       </span>
                     </div>
                   ) : (
@@ -276,6 +278,7 @@ export function CartasPage() {
         onOpenChange={setOpen}
         editing={editing}
         vendedores={vendedores ?? []}
+        clientes={clientes ?? []}
         onSubmit={handleSubmit}
         isSubmitting={createCarta.isPending || updateCarta.isPending}
       />

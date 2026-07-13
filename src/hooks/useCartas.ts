@@ -1,21 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { supabase } from "@/lib/supabase"
-import type { CartaComVendedor, CartaInput } from "@/types/database"
+import type { CartaComRelacoes, CartaInput } from "@/types/database"
 
 const CARTAS_QUERY_KEY = ["cartas"] as const
 
 export function useCartas() {
   return useQuery({
     queryKey: CARTAS_QUERY_KEY,
-    queryFn: async (): Promise<CartaComVendedor[]> => {
+    queryFn: async (): Promise<CartaComRelacoes[]> => {
       const { data, error } = await supabase
         .from("cartas")
-        .select("*, vendedor:vendedores(id, nome)")
+        .select(
+          `*,
+          vendedor:vendedores(id, nome),
+          cliente_vendedor:clientes!cartas_cliente_vendedor_id_fkey(id, nome, documento, tipo_pessoa),
+          cliente_comprador:clientes!cartas_cliente_comprador_id_fkey(id, nome, documento, tipo_pessoa)`
+        )
         .order("data_compra", { ascending: false })
 
       if (error) throw error
-      return data as unknown as CartaComVendedor[]
+      return data as unknown as CartaComRelacoes[]
     },
   })
 }

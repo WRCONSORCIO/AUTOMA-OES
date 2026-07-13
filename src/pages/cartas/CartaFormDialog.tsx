@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -18,15 +19,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ClienteCombobox } from "@/components/ClienteCombobox"
 import { formatCurrency } from "@/lib/format"
-import type { CartaComVendedor, CartaInput, TipoNegociacao, Vendedor } from "@/types/database"
+import type {
+  CartaComRelacoes,
+  CartaInput,
+  Cliente,
+  TipoNegociacao,
+  Vendedor,
+} from "@/types/database"
 
 interface FormState {
   administradora: string
   tipo_negociacao: TipoNegociacao
   vendedor_id: string
-  cliente_vendedor_nome: string
-  cliente_vendedor_documento: string
+  cliente_vendedor_id: string
   valor_carta: string
   valor_compra: string
   valor_parcela: string
@@ -36,8 +43,7 @@ interface FormState {
   data_compra: string
   observacoes: string
   jaVendida: boolean
-  cliente_comprador_nome: string
-  cliente_comprador_documento: string
+  cliente_comprador_id: string
   valor_venda: string
   data_venda: string
 }
@@ -50,8 +56,7 @@ const EMPTY_FORM: FormState = {
   administradora: "",
   tipo_negociacao: "compra_venda",
   vendedor_id: "",
-  cliente_vendedor_nome: "",
-  cliente_vendedor_documento: "",
+  cliente_vendedor_id: "",
   valor_carta: "",
   valor_compra: "",
   valor_parcela: "",
@@ -61,19 +66,17 @@ const EMPTY_FORM: FormState = {
   data_compra: today(),
   observacoes: "",
   jaVendida: false,
-  cliente_comprador_nome: "",
-  cliente_comprador_documento: "",
+  cliente_comprador_id: "",
   valor_venda: "",
   data_venda: today(),
 }
 
-function toFormState(carta: CartaComVendedor): FormState {
+function toFormState(carta: CartaComRelacoes): FormState {
   return {
     administradora: carta.administradora,
     tipo_negociacao: carta.tipo_negociacao,
     vendedor_id: carta.vendedor_id ?? "",
-    cliente_vendedor_nome: carta.cliente_vendedor_nome,
-    cliente_vendedor_documento: carta.cliente_vendedor_documento,
+    cliente_vendedor_id: carta.cliente_vendedor_id,
     valor_carta: String(carta.valor_carta),
     valor_compra: String(carta.valor_compra),
     valor_parcela: String(carta.valor_parcela),
@@ -83,8 +86,7 @@ function toFormState(carta: CartaComVendedor): FormState {
     data_compra: carta.data_compra,
     observacoes: carta.observacoes ?? "",
     jaVendida: carta.status === "vendida",
-    cliente_comprador_nome: carta.cliente_comprador_nome ?? "",
-    cliente_comprador_documento: carta.cliente_comprador_documento ?? "",
+    cliente_comprador_id: carta.cliente_comprador_id ?? "",
     valor_venda: carta.valor_venda != null ? String(carta.valor_venda) : "",
     data_venda: carta.data_venda ?? today(),
   }
@@ -98,8 +100,9 @@ function num(value: string): number {
 interface CartaFormDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  editing: CartaComVendedor | null
+  editing: CartaComRelacoes | null
   vendedores: Vendedor[]
+  clientes: Cliente[]
   onSubmit: (input: CartaInput) => Promise<void>
   isSubmitting: boolean
 }
@@ -109,6 +112,7 @@ export function CartaFormDialog({
   onOpenChange,
   editing,
   vendedores,
+  clientes,
   onSubmit,
   isSubmitting,
 }: CartaFormDialogProps) {
@@ -127,17 +131,22 @@ export function CartaFormDialog({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
 
+    if (!form.cliente_vendedor_id) {
+      toast.error("Selecione o cliente dono atual da carta.")
+      return
+    }
+    if (form.jaVendida && !form.cliente_comprador_id) {
+      toast.error("Selecione o cliente comprador.")
+      return
+    }
+
     const input: CartaInput = {
       administradora: form.administradora,
       tipo_negociacao: form.tipo_negociacao,
       status: form.jaVendida ? "vendida" : "estoque",
       vendedor_id: form.vendedor_id || null,
-      cliente_vendedor_nome: form.cliente_vendedor_nome,
-      cliente_vendedor_documento: form.cliente_vendedor_documento,
-      cliente_comprador_nome: form.jaVendida ? form.cliente_comprador_nome : null,
-      cliente_comprador_documento: form.jaVendida
-        ? form.cliente_comprador_documento
-        : null,
+      cliente_vendedor_id: form.cliente_vendedor_id,
+      cliente_comprador_id: form.jaVendida ? form.cliente_comprador_id : null,
       valor_carta: num(form.valor_carta),
       valor_compra: num(form.valor_compra),
       valor_venda: form.jaVendida ? num(form.valor_venda) : null,
@@ -196,28 +205,12 @@ export function CartaFormDialog({
             <h3 className="mb-3 text-sm font-semibold">
               Cliente (dono atual / quem está vendendo a carta)
             </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label>Nome</Label>
-                <Input
-                  required
-                  value={form.cliente_vendedor_nome}
-                  onChange={(e) =>
-                    setForm({ ...form, cliente_vendedor_nome: e.target.value })
-                  }
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label>CPF/CNPJ</Label>
-                <Input
-                  required
-                  value={form.cliente_vendedor_documento}
-                  onChange={(e) =>
-                    setForm({ ...form, cliente_vendedor_documento: e.target.value })
-                  }
-                />
-              </div>
-            </div>
+            <ClienteCombobox
+              clientes={clientes}
+              value={form.cliente_vendedor_id || null}
+              onChange={(id) => setForm({ ...form, cliente_vendedor_id: id })}
+              placeholder="Buscar cliente por nome ou CPF/CNPJ..."
+            />
           </section>
 
           <section className="rounded-lg border p-4">
@@ -301,30 +294,14 @@ export function CartaFormDialog({
 
             {form.jaVendida && (
               <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <Label>Nome do comprador</Label>
-                    <Input
-                      required={form.jaVendida}
-                      value={form.cliente_comprador_nome}
-                      onChange={(e) =>
-                        setForm({ ...form, cliente_comprador_nome: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label>CPF/CNPJ do comprador</Label>
-                    <Input
-                      required={form.jaVendida}
-                      value={form.cliente_comprador_documento}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          cliente_comprador_documento: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Comprador</Label>
+                  <ClienteCombobox
+                    clientes={clientes}
+                    value={form.cliente_comprador_id || null}
+                    onChange={(id) => setForm({ ...form, cliente_comprador_id: id })}
+                    placeholder="Buscar cliente por nome ou CPF/CNPJ..."
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
