@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { CurrencyInput } from "@/components/ui/currency-input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -34,17 +35,17 @@ interface FormState {
   tipo_negociacao: TipoNegociacao
   vendedor_id: string
   cliente_vendedor_id: string
-  valor_carta: string
-  valor_compra: string
-  valor_parcela: string
+  valor_carta: number
+  valor_compra: number
+  valor_parcela: number
   parcelas_pagas: string
   parcelas_a_pagar: string
-  comissao_vendedor: string
+  comissao_vendedor: number
   data_compra: string
   observacoes: string
   jaVendida: boolean
   cliente_comprador_id: string
-  valor_venda: string
+  valor_venda: number
   data_venda: string
 }
 
@@ -57,17 +58,17 @@ const EMPTY_FORM: FormState = {
   tipo_negociacao: "compra_venda",
   vendedor_id: "",
   cliente_vendedor_id: "",
-  valor_carta: "",
-  valor_compra: "",
-  valor_parcela: "",
+  valor_carta: 0,
+  valor_compra: 0,
+  valor_parcela: 0,
   parcelas_pagas: "0",
   parcelas_a_pagar: "0",
-  comissao_vendedor: "0",
+  comissao_vendedor: 0,
   data_compra: today(),
   observacoes: "",
   jaVendida: false,
   cliente_comprador_id: "",
-  valor_venda: "",
+  valor_venda: 0,
   data_venda: today(),
 }
 
@@ -77,23 +78,23 @@ function toFormState(carta: CartaComRelacoes): FormState {
     tipo_negociacao: carta.tipo_negociacao,
     vendedor_id: carta.vendedor_id ?? "",
     cliente_vendedor_id: carta.cliente_vendedor_id,
-    valor_carta: String(carta.valor_carta),
-    valor_compra: String(carta.valor_compra),
-    valor_parcela: String(carta.valor_parcela),
+    valor_carta: carta.valor_carta,
+    valor_compra: carta.valor_compra,
+    valor_parcela: carta.valor_parcela,
     parcelas_pagas: String(carta.parcelas_pagas),
     parcelas_a_pagar: String(carta.parcelas_a_pagar),
-    comissao_vendedor: String(carta.comissao_vendedor),
+    comissao_vendedor: carta.comissao_vendedor,
     data_compra: carta.data_compra,
     observacoes: carta.observacoes ?? "",
     jaVendida: carta.status === "vendida",
     cliente_comprador_id: carta.cliente_comprador_id ?? "",
-    valor_venda: carta.valor_venda != null ? String(carta.valor_venda) : "",
+    valor_venda: carta.valor_venda ?? 0,
     data_venda: carta.data_venda ?? today(),
   }
 }
 
-function num(value: string): number {
-  const n = Number(value.replace(",", "."))
+function numParcelas(value: string): number {
+  const n = Number(value.replace(/\D/g, ""))
   return Number.isFinite(n) ? n : 0
 }
 
@@ -125,7 +126,7 @@ export function CartaFormDialog({
   }, [open, editing])
 
   const lucroPreview = form.jaVendida
-    ? num(form.valor_venda) - num(form.valor_compra) - num(form.comissao_vendedor)
+    ? form.valor_venda - form.valor_compra - form.comissao_vendedor
     : null
 
   async function handleSubmit(e: FormEvent) {
@@ -147,13 +148,13 @@ export function CartaFormDialog({
       vendedor_id: form.vendedor_id || null,
       cliente_vendedor_id: form.cliente_vendedor_id,
       cliente_comprador_id: form.jaVendida ? form.cliente_comprador_id : null,
-      valor_carta: num(form.valor_carta),
-      valor_compra: num(form.valor_compra),
-      valor_venda: form.jaVendida ? num(form.valor_venda) : null,
-      valor_parcela: num(form.valor_parcela),
-      parcelas_pagas: Math.trunc(num(form.parcelas_pagas)),
-      parcelas_a_pagar: Math.trunc(num(form.parcelas_a_pagar)),
-      comissao_vendedor: num(form.comissao_vendedor),
+      valor_carta: form.valor_carta,
+      valor_compra: form.valor_compra,
+      valor_venda: form.jaVendida ? form.valor_venda : null,
+      valor_parcela: form.valor_parcela,
+      parcelas_pagas: numParcelas(form.parcelas_pagas),
+      parcelas_a_pagar: numParcelas(form.parcelas_a_pagar),
+      comissao_vendedor: form.comissao_vendedor,
       data_compra: form.data_compra,
       data_venda: form.jaVendida ? form.data_venda : null,
       observacoes: form.observacoes || null,
@@ -218,19 +219,17 @@ export function CartaFormDialog({
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Valor da carta (R$)</Label>
-                <Input
+                <CurrencyInput
                   required
-                  inputMode="decimal"
                   value={form.valor_carta}
-                  onChange={(e) => setForm({ ...form, valor_carta: e.target.value })}
+                  onChange={(v) => setForm({ ...form, valor_carta: v })}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Valor da parcela (R$)</Label>
-                <Input
-                  inputMode="decimal"
+                <CurrencyInput
                   value={form.valor_parcela}
-                  onChange={(e) => setForm({ ...form, valor_parcela: e.target.value })}
+                  onChange={(v) => setForm({ ...form, valor_parcela: v })}
                 />
               </div>
               <div />
@@ -260,11 +259,10 @@ export function CartaFormDialog({
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <Label>Valor de compra (R$)</Label>
-                <Input
+                <CurrencyInput
                   required
-                  inputMode="decimal"
                   value={form.valor_compra}
-                  onChange={(e) => setForm({ ...form, valor_compra: e.target.value })}
+                  onChange={(v) => setForm({ ...form, valor_compra: v })}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -306,11 +304,10 @@ export function CartaFormDialog({
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
                     <Label>Valor de venda (R$)</Label>
-                    <Input
+                    <CurrencyInput
                       required={form.jaVendida}
-                      inputMode="decimal"
                       value={form.valor_venda}
-                      onChange={(e) => setForm({ ...form, valor_venda: e.target.value })}
+                      onChange={(v) => setForm({ ...form, valor_venda: v })}
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -353,12 +350,9 @@ export function CartaFormDialog({
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Comissão do vendedor (R$)</Label>
-                <Input
-                  inputMode="decimal"
+                <CurrencyInput
                   value={form.comissao_vendedor}
-                  onChange={(e) =>
-                    setForm({ ...form, comissao_vendedor: e.target.value })
-                  }
+                  onChange={(v) => setForm({ ...form, comissao_vendedor: v })}
                 />
               </div>
             </div>
