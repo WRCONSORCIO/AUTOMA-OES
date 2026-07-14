@@ -1,5 +1,5 @@
 export type TipoNegociacao = "compra_venda" | "intermediacao"
-export type StatusCarta = "estoque" | "vendida"
+export type StatusCarta = "estoque" | "vendida" | "transferida"
 export type TipoPessoa = "fisica" | "juridica"
 
 export interface Vendedor {
@@ -48,6 +48,7 @@ export interface Carta {
   comissao_vendedor: number
   data_compra: string
   data_venda: string | null
+  data_transferencia: string | null
   observacoes: string | null
   lucro: number | null
   created_at: string

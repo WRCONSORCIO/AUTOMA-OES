@@ -167,8 +167,20 @@ export function DashboardPage() {
                       {carta.cliente_vendedor?.nome} · {formatDate(carta.data_compra)}
                     </p>
                   </div>
-                  <Badge variant={carta.status === "vendida" ? "success" : "secondary"}>
-                    {carta.status === "vendida" ? "Vendida" : "Estoque"}
+                  <Badge
+                    variant={
+                      carta.status === "vendida"
+                        ? "success"
+                        : carta.status === "transferida"
+                          ? "outline"
+                          : "secondary"
+                    }
+                  >
+                    {carta.status === "vendida"
+                      ? "Vendida"
+                      : carta.status === "transferida"
+                        ? "Transferida"
+                        : "Estoque"}
                   </Badge>
                 </div>
               ))}

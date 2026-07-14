@@ -32,6 +32,10 @@ coisa descrita abaixo).
      a tabela `clientes` (pessoa física/jurídica) e migra os dados que já
      existirem em `cartas` para ela, ligando cada carta ao cliente
      correspondente.
+   - [`0003_transferencia.sql`](./supabase/migrations/0003_transferencia.sql):
+     adiciona o status `transferida` (carta comprada e transferida para o
+     nome da própria empresa, sem venda a terceiro) e a coluna
+     `data_transferencia`.
 3. Em **Project Settings → API**, copie a **Project URL** e a chave
    **anon public**.
 4. Copie `.env.example` para `.env` e preencha:
@@ -71,10 +75,12 @@ Já `cartas` representa o ciclo completo de uma carta contemplada:
   (o que recebemos), `valor_parcela`, `parcelas_pagas`, `parcelas_a_pagar`.
 - **Comissão**: `comissao_vendedor`, vinculada a um `vendedor_id`
   (tabela `vendedores`, os representantes internos).
-- **Datas**: `data_compra`, `data_venda`.
+- **Datas**: `data_compra`, `data_venda`, `data_transferencia`.
 - **Lucro**: coluna gerada automaticamente pelo Postgres =
-  `valor_venda - valor_compra - comissao_vendedor`.
-- **Status**: `estoque` (comprada, ainda não vendida) ou `vendida`.
+  `valor_venda - valor_compra - comissao_vendedor` (só quando vendida).
+- **Status**: `estoque` (comprada, ainda não vendida), `vendida` (vendida
+  a um cliente) ou `transferida` (comprada e transferida para o nome da
+  própria empresa, sem venda a terceiro — ex: WR assumiu a cota).
 - **Tipo de negociação**: `compra_venda` (compramos e revendemos depois)
   ou `intermediacao` (ponta a ponta).
 

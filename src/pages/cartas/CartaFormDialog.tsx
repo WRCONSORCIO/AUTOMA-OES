@@ -26,6 +26,7 @@ import type {
   CartaComRelacoes,
   CartaInput,
   Cliente,
+  StatusCarta,
   TipoNegociacao,
   Vendedor,
 } from "@/types/database"
@@ -43,10 +44,11 @@ interface FormState {
   comissao_vendedor: number
   data_compra: string
   observacoes: string
-  jaVendida: boolean
+  situacao: StatusCarta
   cliente_comprador_id: string
   valor_venda: number
   data_venda: string
+  data_transferencia: string
 }
 
 function today() {
@@ -66,10 +68,11 @@ const EMPTY_FORM: FormState = {
   comissao_vendedor: 0,
   data_compra: today(),
   observacoes: "",
-  jaVendida: false,
+  situacao: "estoque",
   cliente_comprador_id: "",
   valor_venda: 0,
   data_venda: today(),
+  data_transferencia: today(),
 }
 
 function toFormState(carta: CartaComRelacoes): FormState {
@@ -86,10 +89,11 @@ function toFormState(carta: CartaComRelacoes): FormState {
     comissao_vendedor: carta.comissao_vendedor,
     data_compra: carta.data_compra,
     observacoes: carta.observacoes ?? "",
-    jaVendida: carta.status === "vendida",
+    situacao: carta.status,
     cliente_comprador_id: carta.cliente_comprador_id ?? "",
     valor_venda: carta.valor_venda ?? 0,
     data_venda: carta.data_venda ?? today(),
+    data_transferencia: carta.data_transferencia ?? today(),
   }
 }
 
@@ -125,9 +129,10 @@ export function CartaFormDialog({
     }
   }, [open, editing])
 
-  const lucroPreview = form.jaVendida
-    ? form.valor_venda - form.valor_compra - form.comissao_vendedor
-    : null
+  const lucroPreview =
+    form.situacao === "vendida"
+      ? form.valor_venda - form.valor_compra - form.comissao_vendedor
+      : null
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -136,27 +141,32 @@ export function CartaFormDialog({
       toast.error("Selecione o cliente dono atual da carta.")
       return
     }
-    if (form.jaVendida && !form.cliente_comprador_id) {
+    if (form.situacao === "vendida" && !form.cliente_comprador_id) {
       toast.error("Selecione o cliente comprador.")
+      return
+    }
+    if (form.situacao === "transferida" && !form.data_transferencia) {
+      toast.error("Informe a data da transferência.")
       return
     }
 
     const input: CartaInput = {
       administradora: form.administradora,
       tipo_negociacao: form.tipo_negociacao,
-      status: form.jaVendida ? "vendida" : "estoque",
+      status: form.situacao,
       vendedor_id: form.vendedor_id || null,
       cliente_vendedor_id: form.cliente_vendedor_id,
-      cliente_comprador_id: form.jaVendida ? form.cliente_comprador_id : null,
+      cliente_comprador_id: form.situacao === "vendida" ? form.cliente_comprador_id : null,
       valor_carta: form.valor_carta,
       valor_compra: form.valor_compra,
-      valor_venda: form.jaVendida ? form.valor_venda : null,
+      valor_venda: form.situacao === "vendida" ? form.valor_venda : null,
       valor_parcela: form.valor_parcela,
       parcelas_pagas: numParcelas(form.parcelas_pagas),
       parcelas_a_pagar: numParcelas(form.parcelas_a_pagar),
       comissao_vendedor: form.comissao_vendedor,
       data_compra: form.data_compra,
-      data_venda: form.jaVendida ? form.data_venda : null,
+      data_venda: form.situacao === "vendida" ? form.data_venda : null,
+      data_transferencia: form.situacao === "transferida" ? form.data_transferencia : null,
       observacoes: form.observacoes || null,
     }
 
@@ -278,20 +288,25 @@ export function CartaFormDialog({
           </section>
 
           <section className="rounded-lg border p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Venda (o que recebemos)</h3>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.jaVendida}
-                  onChange={(e) => setForm({ ...form, jaVendida: e.target.checked })}
-                />
-                Carta já vendida
-              </label>
-            </div>
+            <h3 className="mb-3 text-sm font-semibold">Situação da carta</h3>
+            <Select
+              value={form.situacao}
+              onValueChange={(v: StatusCarta) => setForm({ ...form, situacao: v })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="estoque">Em estoque (ainda não vendida)</SelectItem>
+                <SelectItem value="vendida">Vendida para um cliente</SelectItem>
+                <SelectItem value="transferida">
+                  Transferida para o nome da empresa
+                </SelectItem>
+              </SelectContent>
+            </Select>
 
-            {form.jaVendida && (
-              <div className="flex flex-col gap-4">
+            {form.situacao === "vendida" && (
+              <div className="mt-4 flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                   <Label>Comprador</Label>
                   <ClienteCombobox
@@ -305,7 +320,7 @@ export function CartaFormDialog({
                   <div className="flex flex-col gap-1.5">
                     <Label>Valor de venda (R$)</Label>
                     <CurrencyInput
-                      required={form.jaVendida}
+                      required
                       value={form.valor_venda}
                       onChange={(v) => setForm({ ...form, valor_venda: v })}
                     />
@@ -313,12 +328,32 @@ export function CartaFormDialog({
                   <div className="flex flex-col gap-1.5">
                     <Label>Data da venda</Label>
                     <Input
-                      required={form.jaVendida}
+                      required
                       type="date"
                       value={form.data_venda}
                       onChange={(e) => setForm({ ...form, data_venda: e.target.value })}
                     />
                   </div>
+                </div>
+              </div>
+            )}
+
+            {form.situacao === "transferida" && (
+              <div className="mt-4 flex flex-col gap-4">
+                <p className="text-sm text-muted-foreground">
+                  A carta foi comprada, mas em vez de vendida a um cliente, foi
+                  transferida para o nome da própria empresa.
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Data da transferência</Label>
+                  <Input
+                    required
+                    type="date"
+                    value={form.data_transferencia}
+                    onChange={(e) =>
+                      setForm({ ...form, data_transferencia: e.target.value })
+                    }
+                  />
                 </div>
               </div>
             )}

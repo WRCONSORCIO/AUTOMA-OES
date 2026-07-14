@@ -28,7 +28,7 @@ import { useClientes } from "@/hooks/useClientes"
 import type { CartaComRelacoes, CartaInput } from "@/types/database"
 import { CartaFormDialog } from "@/pages/cartas/CartaFormDialog"
 
-type FiltroAba = "todas" | "estoque" | "vendida" | "intermediacao"
+type FiltroAba = "todas" | "estoque" | "vendida" | "transferida" | "intermediacao"
 
 export function CartasPage() {
   const { data: cartas, isLoading } = useCartas()
@@ -54,6 +54,7 @@ export function CartasPage() {
     return (cartas ?? []).filter((carta) => {
       if (aba === "estoque" && carta.status !== "estoque") return false
       if (aba === "vendida" && carta.status !== "vendida") return false
+      if (aba === "transferida" && carta.status !== "transferida") return false
       if (aba === "intermediacao" && carta.tipo_negociacao !== "intermediacao")
         return false
 
@@ -138,6 +139,7 @@ export function CartasPage() {
             <TabsTrigger value="todas">Todas</TabsTrigger>
             <TabsTrigger value="estoque">Estoque</TabsTrigger>
             <TabsTrigger value="vendida">Vendidas</TabsTrigger>
+            <TabsTrigger value="transferida">Transferidas</TabsTrigger>
             <TabsTrigger value="intermediacao">Intermediação</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -204,8 +206,20 @@ export function CartasPage() {
                 <TableCell>{carta.administradora}</TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
-                    <Badge variant={carta.status === "vendida" ? "success" : "secondary"}>
-                      {carta.status === "vendida" ? "Vendida" : "Estoque"}
+                    <Badge
+                      variant={
+                        carta.status === "vendida"
+                          ? "success"
+                          : carta.status === "transferida"
+                            ? "outline"
+                            : "secondary"
+                      }
+                    >
+                      {carta.status === "vendida"
+                        ? "Vendida"
+                        : carta.status === "transferida"
+                          ? "Transferida"
+                          : "Estoque"}
                     </Badge>
                     {carta.tipo_negociacao === "intermediacao" && (
                       <Badge variant="outline">Intermediação</Badge>
@@ -228,6 +242,10 @@ export function CartasPage() {
                         {carta.cliente_comprador.documento}
                       </span>
                     </div>
+                  ) : carta.status === "transferida" ? (
+                    <span className="text-xs text-muted-foreground">
+                      Transferida para a empresa
+                    </span>
                   ) : (
                     "—"
                   )}
@@ -256,7 +274,9 @@ export function CartasPage() {
                   )}
                 </TableCell>
                 <TableCell>{formatDate(carta.data_compra)}</TableCell>
-                <TableCell>{formatDate(carta.data_venda)}</TableCell>
+                <TableCell>
+                  {formatDate(carta.data_venda ?? carta.data_transferencia)}
+                </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" size="icon" onClick={() => openEdit(carta)}>

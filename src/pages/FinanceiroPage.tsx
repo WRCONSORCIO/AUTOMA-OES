@@ -27,7 +27,7 @@ import type { CartaComRelacoes, CartaInput } from "@/types/database"
 import { CartaFormDialog } from "@/pages/cartas/CartaFormDialog"
 import { toast } from "sonner"
 
-type TipoTransacao = "Compra" | "Venda" | "Intermediação"
+type TipoTransacao = "Compra" | "Venda" | "Intermediação" | "Transferida"
 
 interface Transacao {
   id: string
@@ -54,27 +54,38 @@ function toTransacoes(cartas: CartaComRelacoes[]): Transacao[] {
   return cartas
     .map((carta): Transacao => {
       const vendida = carta.status === "vendida"
+      const transferida = carta.status === "transferida"
       const intermediacao = carta.tipo_negociacao === "intermediacao"
 
-      const tipo: TipoTransacao = !vendida
-        ? "Compra"
-        : intermediacao
+      const tipo: TipoTransacao = vendida
+        ? intermediacao
           ? "Intermediação"
           : "Venda"
+        : transferida
+          ? "Transferida"
+          : "Compra"
 
       const entrada = vendida ? (carta.valor_venda ?? 0) : 0
       const saida = vendida ? carta.valor_compra + carta.comissao_vendedor : carta.valor_compra
 
-      const descricao = !vendida
-        ? `Compra de ${carta.cliente_vendedor?.nome} — ${carta.administradora}`
-        : intermediacao
+      const descricao = vendida
+        ? intermediacao
           ? `Intermediação ${carta.cliente_vendedor?.nome} — ${carta.administradora}`
           : `Venda para ${carta.cliente_comprador?.nome} — ${carta.codigo}`
+        : transferida
+          ? `Transferida para a empresa — ${carta.codigo} · ${carta.administradora}`
+          : `Compra de ${carta.cliente_vendedor?.nome} — ${carta.administradora}`
+
+      const data = vendida && carta.data_venda
+        ? carta.data_venda
+        : transferida && carta.data_transferencia
+          ? carta.data_transferencia
+          : carta.data_compra
 
       return {
         id: carta.id,
         carta,
-        data: vendida && carta.data_venda ? carta.data_venda : carta.data_compra,
+        data,
         tipo,
         descricao,
         vendedor: carta.vendedor?.nome ?? "—",
@@ -90,6 +101,7 @@ const TIPO_BADGE_VARIANT: Record<TipoTransacao, "secondary" | "success" | "outli
   Compra: "secondary",
   Venda: "success",
   Intermediação: "outline",
+  Transferida: "outline",
 }
 
 export function FinanceiroPage() {
@@ -163,6 +175,7 @@ export function FinanceiroPage() {
               <SelectItem value="todos">Todos os tipos</SelectItem>
               <SelectItem value="Compra">Compra</SelectItem>
               <SelectItem value="Venda">Venda</SelectItem>
+              <SelectItem value="Transferida">Transferida</SelectItem>
               <SelectItem value="Intermediação">Intermediação</SelectItem>
             </SelectContent>
           </Select>
