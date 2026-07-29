@@ -1,29 +1,21 @@
-# Logs
-logs
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+
+.env
+.env.local
+.env.*.local
+
+storage/
+!storage/.gitkeep
+
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# .env fica versionado de propósito: contém só valores VITE_ (chave anon
-# do Supabase), que são públicos por design e o Lovable precisa deles
-# commitados no repo para gerar o build/preview. Nunca coloque a chave
-# service_role/secret aqui.
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+.vscode/
+.idea/
+tsconfig.tsbuildinfo
+next-env.d.ts
