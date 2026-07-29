@@ -1,0 +1,255 @@
+import "server-only";
+
+import { Prisma, type CategoriaVendedor } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { calcularComissaoWr, type FaixaParcela } from "@/server/domain/regras";
+import { registrarAuditoria } from "./auditoria";
+import { CacheVendedores, type ContextoUsuario } from "./vendedores";
+
+const TAMANHO_LOTE = 500;
+
+export interface ResumoRecalculo {
+  cotasAvaliadas: number;
+  cotasComCategoriaPreenchida: number;
+  cotasMarcadasEmRecuperacao: number;
+  lancamentosAvaliados: number;
+  lancamentosAtualizados: number;
+  valorComissaoWr: number;
+}
+
+/**
+ * Reaplica as regras de cálculo sobre o que já foi importado.
+ *
+ * Necessário quando o cadastro é completado depois da importação — por exemplo,
+ * quando o RH define a categoria de um vendedor que a base criou automaticamente.
+ *
+ * Garantias:
+ * - Snapshots já gravados NUNCA são sobrescritos. A categoria da venda só é
+ *   preenchida onde ainda está vazia; a marcação de recuperação só é acrescentada.
+ * - O valor da comissão WR é recalculado com a tabela vigente para a categoria
+ *   daquela venda, nunca com a categoria atual do vendedor.
+ */
+export async function recalcularComissoes(
+  usuario: ContextoUsuario,
+): Promise<ResumoRecalculo> {
+  const resumo: ResumoRecalculo = {
+    cotasAvaliadas: 0,
+    cotasComCategoriaPreenchida: 0,
+    cotasMarcadasEmRecuperacao: 0,
+    lancamentosAvaliados: 0,
+    lancamentosAtualizados: 0,
+    valorComissaoWr: 0,
+  };
+
+  const cache = new CacheVendedores(prisma);
+
+  await preencherSnapshotsDeCotas(cache, resumo);
+  await recalcularLancamentos(cache, resumo);
+
+  await registrarAuditoria({
+    acao: "RECALCULO_COMISSAO",
+    entidade: "ComissaoWr",
+    descricao: `Recálculo executado: ${resumo.cotasComCategoriaPreenchida} venda(s) com categoria preenchida, ${resumo.lancamentosAtualizados} lançamento(s) atualizado(s)`,
+    dadosDepois: resumo,
+    usuario,
+  });
+
+  resumo.valorComissaoWr = Math.round(resumo.valorComissaoWr * 100) / 100;
+  return resumo;
+}
+
+/**
+ * Preenche a categoria da venda das cotas que ficaram sem ela e acrescenta a
+ * marcação de recuperação quando aplicável.
+ */
+async function preencherSnapshotsDeCotas(
+  cache: CacheVendedores,
+  resumo: ResumoRecalculo,
+): Promise<void> {
+  let cursor: string | undefined;
+
+  for (;;) {
+    const cotas = await prisma.cota.findMany({
+      where: {
+        vendedorEfetivoId: { not: null },
+        dataVenda: { not: null },
+        OR: [{ categoriaVenda: null }, { emRecuperacao: false }],
+      },
+      select: {
+        id: true,
+        dataVenda: true,
+        vendedorEfetivoId: true,
+        categoriaVenda: true,
+        emRecuperacao: true,
+      },
+      orderBy: { id: "asc" },
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: TAMANHO_LOTE,
+    });
+
+    if (cotas.length === 0) break;
+    cursor = cotas.at(-1)!.id;
+
+    for (const cota of cotas) {
+      resumo.cotasAvaliadas += 1;
+
+      const vendedorId = cota.vendedorEfetivoId!;
+      const dataVenda = cota.dataVenda!;
+
+      const dados: Prisma.CotaUpdateInput = {};
+
+      if (!cota.categoriaVenda) {
+        const categoria = await cache.categoriaNaData(vendedorId, dataVenda);
+        if (categoria) {
+          dados.categoriaVenda = categoria;
+          dados.categoriaVendaFixadaEm = new Date();
+          resumo.cotasComCategoriaPreenchida += 1;
+        }
+      }
+
+      if (!cota.emRecuperacao) {
+        const recuperacao = await cache.recuperacaoNaData(vendedorId, dataVenda);
+        if (recuperacao) {
+          dados.emRecuperacao = true;
+          dados.recuperacao = { connect: { id: recuperacao.id } };
+          dados.recuperacaoFixadaEm = new Date();
+          resumo.cotasMarcadasEmRecuperacao += 1;
+        }
+      }
+
+      if (Object.keys(dados).length > 0) {
+        await prisma.cota.update({ where: { id: cota.id }, data: dados });
+      }
+    }
+  }
+}
+
+async function recalcularLancamentos(
+  cache: CacheVendedores,
+  resumo: ResumoRecalculo,
+): Promise<void> {
+  const tabelas = await carregarTabelas();
+  let cursor: string | undefined;
+
+  for (;;) {
+    const lancamentos = await prisma.comissaoRegistro.findMany({
+      select: {
+        id: true,
+        parcela: true,
+        tipo: true,
+        valorCredito: true,
+        percentualFlex: true,
+        categoriaVenda: true,
+        emRecuperacao: true,
+        dataVenda: true,
+        vendedorId: true,
+        cotaRef: {
+          select: { categoriaVenda: true, emRecuperacao: true, dataVenda: true },
+        },
+        comissaoWr: { select: { id: true, valor: true } },
+      },
+      orderBy: { id: "asc" },
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: TAMANHO_LOTE,
+    });
+
+    if (lancamentos.length === 0) break;
+    cursor = lancamentos.at(-1)!.id;
+
+    for (const lancamento of lancamentos) {
+      resumo.lancamentosAvaliados += 1;
+
+      // A cota é a fonte da verdade dos snapshots quando o vínculo existe.
+      let categoria: CategoriaVendedor | null =
+        lancamento.cotaRef?.categoriaVenda ?? lancamento.categoriaVenda;
+      let emRecuperacao = lancamento.cotaRef?.emRecuperacao ?? lancamento.emRecuperacao;
+
+      const dataVenda = lancamento.cotaRef?.dataVenda ?? lancamento.dataVenda;
+
+      if (!categoria && lancamento.vendedorId && dataVenda) {
+        categoria = await cache.categoriaNaData(lancamento.vendedorId, dataVenda);
+      }
+      if (!emRecuperacao && lancamento.vendedorId && dataVenda) {
+        emRecuperacao =
+          (await cache.recuperacaoNaData(lancamento.vendedorId, dataVenda)) !== null;
+      }
+
+      const tabela = categoria ? tabelas.get(categoria) : undefined;
+
+      const calculo = calcularComissaoWr({
+        categoria,
+        parcela: lancamento.parcela,
+        valorCredito: Number(lancamento.valorCredito),
+        percentualFlex:
+          lancamento.percentualFlex === null ? null : Number(lancamento.percentualFlex),
+        faixas: tabela?.faixas ?? [],
+        tipo: lancamento.tipo,
+      });
+
+      const valorAtual = lancamento.comissaoWr ? Number(lancamento.comissaoWr.valor) : null;
+      const mudouCategoria = categoria !== lancamento.categoriaVenda;
+      const mudouRecuperacao = emRecuperacao !== lancamento.emRecuperacao;
+      const mudouValor = valorAtual !== calculo.valor;
+
+      if (!mudouCategoria && !mudouRecuperacao && !mudouValor) continue;
+
+      await prisma.$transaction(async (tx) => {
+        await tx.comissaoRegistro.update({
+          where: { id: lancamento.id },
+          data: { categoriaVenda: categoria, emRecuperacao },
+        });
+
+        const dadosWr = {
+          categoriaVenda: categoria,
+          parcela: lancamento.parcela,
+          baseCalculo: new Prisma.Decimal(calculo.baseCalculo.toFixed(2)),
+          percentual: new Prisma.Decimal(calculo.percentual.toFixed(4)),
+          valor: new Prisma.Decimal(calculo.valor.toFixed(2)),
+          regra: calculo.regra,
+          observacao: calculo.observacao ?? null,
+          tabelaComissaoId: calculo.aplicavel ? (tabela?.id ?? null) : null,
+          calculadoEm: new Date(),
+        };
+
+        if (lancamento.comissaoWr) {
+          await tx.comissaoWr.update({ where: { id: lancamento.comissaoWr.id }, data: dadosWr });
+        } else {
+          await tx.comissaoWr.create({
+            data: { ...dadosWr, comissaoRegistroId: lancamento.id },
+          });
+        }
+      });
+
+      resumo.lancamentosAtualizados += 1;
+      resumo.valorComissaoWr += calculo.valor;
+    }
+  }
+}
+
+async function carregarTabelas(): Promise<
+  Map<CategoriaVendedor, { id: string; faixas: FaixaParcela[] }>
+> {
+  const hoje = new Date();
+  const tabelas = await prisma.tabelaComissao.findMany({
+    where: {
+      ativo: true,
+      vigenteDe: { lte: hoje },
+      OR: [{ vigenteAte: null }, { vigenteAte: { gte: hoje } }],
+    },
+    include: { faixas: { orderBy: { parcela: "asc" } } },
+    orderBy: { vigenteDe: "desc" },
+  });
+
+  const mapa = new Map<CategoriaVendedor, { id: string; faixas: FaixaParcela[] }>();
+  for (const tabela of tabelas) {
+    if (mapa.has(tabela.categoria)) continue;
+    mapa.set(tabela.categoria, {
+      id: tabela.id,
+      faixas: tabela.faixas.map((faixa) => ({
+        parcela: faixa.parcela,
+        percentual: Number(faixa.percentual),
+      })),
+    });
+  }
+  return mapa;
+}

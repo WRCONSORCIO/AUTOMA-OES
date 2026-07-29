@@ -1,109 +1,153 @@
-# WR Consórcio — Cartas Contempladas
+# WR Consórcio — ERP Comercial
 
-Sistema para acompanhar a compra, venda e intermediação de cartas de
-consórcio contempladas: quem vendeu a carta para a empresa, quem comprou,
-valores, parcelas, comissão do vendedor interno e lucro de cada negociação.
+Sistema interno de gestão comercial: vendedores, equipes, gerências, comissões,
+recuperação e acompanhamento financeiro. Todo cálculo acontece automaticamente
+a partir das importações da administradora.
 
-Stack: React + Vite + TypeScript + Tailwind + shadcn/ui + Supabase (Postgres).
-Essa é a mesma stack usada pelo Lovable, então o projeto pode ser publicado
-lá depois sem precisar reescrever nada.
+## Stack
 
-## 1. Rodando localmente (VS Code)
+Next.js 15 (App Router) · React 19 · TypeScript strict · TailwindCSS 4 ·
+Prisma · PostgreSQL · Recharts
+
+## Como as regras de negócio estão implementadas
+
+As regras críticas vivem em `src/server/domain/regras.ts` como funções puras,
+sem acesso a banco, e são cobertas por testes em `tests/regras.test.ts`.
+
+| Regra | Onde está | Como funciona |
+|---|---|---|
+| **A categoria pertence à venda, não ao vendedor** | `resolverCategoriaNaData` | A categoria vigente na data da venda é gravada em `Cota.categoriaVenda` e nunca é recalculada. Promover o vendedor não muda o cálculo das vendas anteriores. |
+| **Histórico de categoria** | `VendedorCategoriaHistorico` | Append-only. Alterar a categoria encerra o período anterior e abre um novo; nada é apagado. |
+| **Recuperação marca a venda permanentemente** | `encontrarRecuperacaoNaData` | Vendas no intervalo recebem `emRecuperacao = true`. A marcação só pode ser acrescentada, nunca removida — encerrar a recuperação não desmarca nada. |
+| **Estorno antes da 6ª parcela** | `deveGerarEstorno` | Venda marcada em recuperação que cancela com menos de 6 parcelas pagas gera `Estorno`, mesmo que o cancelamento ocorra anos depois. |
+| **Identidade da cota** | `montarIdentidadeCota` | Chave única = administradora + contrato + grupo + cota + CPF/CNPJ do cliente. Nunca só o CPF, só o nome ou só o contrato. |
+| **Duplicidade** | `chaveDuplicidade` | Só é duplicata quando os **sete** campos coincidem (os cinco da identidade + nome do cliente + CPF/CNPJ do vendedor). |
+| **Precedência do vendedor** | `resolverVendedorEfetivo` | O override interno da WR vence sempre; sem override, vale o vendedor da administradora. A base da administradora nunca é alterada. |
+| **Inclusão de plano = parcela 1** | `resolverParcela` | `INCLUSAO DE PLANO` é sempre interpretado como parcela 1, ignorando qualquer outro valor. |
+| **Flex define a base** | `calcularBaseComissao` | Base = crédito × percentual da modalidade. Crédito de R$ 500.000 com Flex 50 → base de R$ 250.000. |
+| **Comissão WR por parcela** | `calcularComissaoWr` | Cruza a parcela paga com a tabela da categoria **da venda**. Parcela sem percentual cadastrado não gera comissão (é assim que "acima da parcela 4 não gera comissão de Iniciante" fica configurado). |
+
+### Nada é apagado
+
+- Cotas, vendedores, equipes, gerências e usuários são **inativados**, nunca excluídos.
+- Cada alteração vinda da administradora gera uma linha em `CotaVersao`.
+- Toda operação relevante grava um `AuditLog` com usuário, data, hora, IP e o diff.
+
+## Importações
+
+### Base de clientes (CSV)
+
+Layout da administradora mapeado **pelo nome das colunas**, não pela posição —
+tolera mudança de ordem ou colunas novas. Ao final, o resumo mostra novos,
+atualizados, cancelados, contemplados, duplicados e erros.
+
+Não existe cadastro manual de cliente: o CSV é a única fonte.
+
+### Relatório de comissão (PDF)
+
+O relatório é um listado de largura fixa. Em vez de ler o texto corrido — que
+embaralha valores quando o extrator quebra tokens (`1.365,5` + `9`) — o parser
+reconstrói cada linha na **coluna original** a partir das coordenadas dos glifos
+e recorta os campos pelas faixas declaradas no cabeçalho do próprio relatório.
+
+O resultado é conferido contra o total impresso no rodapé do PDF: a importação
+reporta a divergência, que deve ser zero.
+
+Registros com tipo fora dos três previstos (por exemplo `EXCLUSAO DE PLANO`,
+presente nos arquivos reais) são importados e exibidos com o texto original
+preservado, mas **não geram comissão WR** — não há regra definida para eles.
+
+## Perfis de acesso
+
+| Perfil | Acesso |
+|---|---|
+| Administrador | Total |
+| Gerente | Somente a própria gerência |
+| Supervisor | Somente a própria equipe |
+| Financeiro | Comissões, importações, tabelas e dashboard |
+| RH | Vendedores, equipes e gerências |
+
+O escopo de gerência/equipe é aplicado no servidor, em todas as consultas —
+inclusive nas agregações SQL do dashboard.
+
+## Colocando para rodar
 
 ```bash
+cp .env.example .env          # ajuste DATABASE_URL e gere o AUTH_SECRET
 npm install
+npx prisma migrate deploy     # ou `npm run prisma:migrate` em desenvolvimento
+npm run db:seed               # estrutura inicial + usuário administrador
 npm run dev
 ```
 
-Ao abrir `http://localhost:5173`, se o Supabase ainda não estiver
-configurado, você verá uma tela explicando os próximos passos (a mesma
-coisa descrita abaixo).
+O seed exibe a senha do administrador uma única vez. Para defini-la você mesmo,
+exporte `SEED_ADMIN_SENHA` (e opcionalmente `SEED_ADMIN_EMAIL`) antes de rodar.
 
-## 2. Criando o banco no Supabase
+### Ordem sugerida na primeira carga
 
-1. Crie uma conta e um projeto gratuito em [supabase.com](https://supabase.com).
-2. No painel do projeto, abra **SQL Editor** e rode, **nesta ordem**, o
-   conteúdo de cada arquivo em [`supabase/migrations`](./supabase/migrations):
-   - [`0001_init.sql`](./supabase/migrations/0001_init.sql): cria as
-     tabelas `vendedores` e `cartas`, os índices, o gerador automático de
-     código (`CART-0001`, `CART-0002`, ...) e a coluna de lucro calculada
-     automaticamente.
-   - [`0002_clientes.sql`](./supabase/migrations/0002_clientes.sql): cria
-     a tabela `clientes` (pessoa física/jurídica) e migra os dados que já
-     existirem em `cartas` para ela, ligando cada carta ao cliente
-     correspondente.
-   - [`0003_transferencia.sql`](./supabase/migrations/0003_transferencia.sql):
-     adiciona o status `transferida` (carta comprada e transferida para o
-     nome da própria empresa, sem venda a terceiro) e a coluna
-     `data_transferencia`.
-3. Em **Project Settings → API**, copie a **Project URL** e a chave
-   **anon public**.
-4. Copie `.env.example` para `.env` e preencha:
-
+1. **Importações → Base de clientes (CSV).** Cria as cotas e os vendedores que
+   aparecem na base, já com o CPF/CNPJ real.
+2. **Cadastros → Gerências e Equipes.** Confira a estrutura criada pelo seed.
+3. **Complete o cadastro dos vendedores** (categoria, equipe e gerência). Para
+   carregar em lote a partir da planilha de controle, salve-a como CSV com as
+   colunas `VENDEDOR;CATEGORIA;SUPERVISAO;GERENCIA` e rode:
    ```bash
-   cp .env.example .env
+   npx tsx scripts/importar-cadastro-vendedores.ts cadastro.csv          # simula
+   npx tsx scripts/importar-cadastro-vendedores.ts cadastro.csv --aplicar
    ```
+4. **Tabelas e Flex.** Ajuste os percentuais por parcela de cada categoria.
+5. **Importações → Relatório de comissão (PDF).**
+6. **Comissões WR → Recalcular comissões**, sempre que o cadastro for
+   completado depois de uma importação.
 
-   ```
-   VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
-   VITE_SUPABASE_ANON_KEY=SUA_CHAVE_ANON_PUBLICA
-   ```
+> Vendedor criado automaticamente pela importação fica **sem categoria** e não
+> gera comissão WR até que a categoria seja registrada com a data de início
+> correta. Isso é intencional: o sistema não inventa uma categoria para calcular
+> dinheiro.
 
-5. Reinicie `npm run dev`.
+## Backup
 
-> **O `.env` É versionado de propósito** (não está no `.gitignore`). Ele só
-> guarda a URL do projeto e a chave `anon`/`public`, que são feitas para
-> ficar expostas no navegador (a segurança real vem das políticas de RLS
-> no banco) — e o Lovable exige que valores `VITE_*` estejam commitados no
-> `.env` para conseguir gerar o build/preview. **Nunca** coloque a chave
-> `service_role`/`secret` em lugar nenhum do frontend.
+Botão **Gerar Backup** na tela de Backups, e backup diário pelo agendador:
 
-## 3. Modelo de dados
+```
+0 3 * * * cd /opt/wr-consorcio && npm run backup:run >> /var/log/wr-backup.log 2>&1
+```
 
-A tabela `clientes` guarda pessoas físicas ou jurídicas (nome, CPF/CNPJ,
-telefone, e-mail) de forma centralizada — a mesma pessoa é reaproveitada
-em negociações futuras (o formulário de carta busca por nome ou
-CPF/CNPJ e autocompleta, ou cadastra na hora se for alguém novo).
+Alternativamente, `POST /api/backups/cron` com `Authorization: Bearer $BACKUP_CRON_TOKEN`.
 
-Já `cartas` representa o ciclo completo de uma carta contemplada:
+Os dumps são gerados com `pg_dump --format=custom` (restauráveis com
+`pg_restore`) e a retenção segue `BACKUP_RETENTION_DAYS`.
 
-- **Cliente (dono atual)**: `cliente_vendedor_id` — referência ao cliente
-  que vendeu a carta para a empresa.
-- **Comprador**: `cliente_comprador_id` — referência ao cliente que
-  comprou, preenchida quando a carta é vendida.
-- **Valores**: `valor_carta`, `valor_compra` (o que pagamos), `valor_venda`
-  (o que recebemos), `valor_parcela`, `parcelas_pagas`, `parcelas_a_pagar`.
-- **Comissão**: `comissao_vendedor`, vinculada a um `vendedor_id`
-  (tabela `vendedores`, os representantes internos).
-- **Datas**: `data_compra`, `data_venda`, `data_transferencia`.
-- **Lucro**: coluna gerada automaticamente pelo Postgres =
-  `valor_venda - valor_compra - comissao_vendedor` (só quando vendida).
-- **Status**: `estoque` (comprada, ainda não vendida), `vendida` (vendida
-  a um cliente) ou `transferida` (comprada e transferida para o nome da
-  própria empresa, sem venda a terceiro — ex: WR assumiu a cota).
-- **Tipo de negociação**: `compra_venda` (compramos e revendemos depois)
-  ou `intermediacao` (ponta a ponta).
+## Comandos
 
-## 4. Páginas
+```bash
+npm run dev          # desenvolvimento
+npm run build        # build de produção
+npm test             # testes das regras de negócio
+npm run typecheck    # verificação de tipos
+npm run db:seed      # carga inicial
+npm run backup:run   # backup manual pela linha de comando
 
-- **Dashboard**: cartas compradas, em estoque, vendidas, em intermediação
-  e lucro total, com gráfico de lucro por mês.
-- **Cartas**: cadastro completo (cliente vendedor, comprador, valores,
-  parcelas, comissão, administradora, vendedor) com filtros por
-  estoque/vendidas/intermediação.
-- **Vendedores**: cadastro dos representantes internos que recebem comissão.
-- **Financeiro**: entradas, saídas e resultado de cada evento (compra,
-  venda, intermediação), com filtro por tipo/mês/ano — no mesmo formato
-  da tela de referência.
+# conferir os parsers contra arquivos reais, sem tocar no banco
+npx tsx scripts/validar-parsers.ts base.csv fechamento.pdf
+```
 
-## 5. Publicando no Lovable
+## Organização
 
-Como o projeto usa a stack padrão do Lovable (Vite + React + TS +
-Tailwind + shadcn/ui + Supabase), basta importar este repositório em um
-novo projeto Lovable e conectar o mesmo projeto Supabase (ou deixar o
-Lovable criar um novo e rodar a migration de novo por lá).
+```
+prisma/schema.prisma          modelo de dados
+src/server/domain/            regras de negócio (puras, testáveis)
+src/server/importacao/        parsers e serviços de importação
+src/server/services/          vendedores, transferências, dashboard, auditoria, backup
+src/server/auth/              sessão e controle de permissões
+src/app/(app)/                telas autenticadas
+src/components/               componentes reutilizáveis
+tests/                        testes das regras
+```
 
-No Lovable, os valores `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` vão
-no arquivo `.env` do projeto (editável pelo próprio Lovable), **não** na
-aba "Secrets" — o Lovable recusa nomes `VITE_*` em Secrets porque essa
-aba é só para chaves de backend que nunca podem chegar ao navegador.
+## Escala
+
+Índices compostos nas colunas de filtro e agregação (`dataReferencia`,
+`gerenciaId`, `equipeId`, `vendedorId`, identidade da cota). Importações rodam
+em lotes com cache de vendedores em memória, e as agregações do dashboard são
+resolvidas em SQL — sem carregar registros para a aplicação.

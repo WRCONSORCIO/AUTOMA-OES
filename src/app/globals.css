@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Tokens do sistema. As cores de série seguem a paleta categórica validada
+ * para daltonismo e contraste em ambos os modos.
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-superficie: #fcfcfb;
+  --color-superficie-2: #ffffff;
+  --color-superficie-3: #f4f4f2;
+  --color-borda: #e2e2dd;
+  --color-borda-forte: #cfcfc8;
+  --color-texto: #0b0b0b;
+  --color-texto-2: #52514e;
+  --color-texto-3: #7c7b75;
+
+  --color-marca: #1d4ed8;
+  --color-marca-forte: #1e40af;
+  --color-marca-suave: #eff4ff;
+
+  --color-serie-1: #2a78d6;
+  --color-serie-2: #eb6834;
+  --color-serie-3: #1baf7a;
+
+  --color-bom: #0f7a4d;
+  --color-atencao: #b06800;
+  --color-grave: #c2410c;
+  --color-critico: #c62b2b;
+
+  --radius-card: 0.875rem;
+}
+
+.dark {
+  --color-superficie: #1a1a19;
+  --color-superficie-2: #232322;
+  --color-superficie-3: #2c2c2a;
+  --color-borda: #383836;
+  --color-borda-forte: #4a4a47;
+  --color-texto: #ffffff;
+  --color-texto-2: #c3c2b7;
+  --color-texto-3: #96958c;
+
+  --color-marca: #6f9cf5;
+  --color-marca-forte: #8fb2f8;
+  --color-marca-suave: #1e2a44;
+
+  --color-serie-1: #3987e5;
+  --color-serie-2: #d95926;
+  --color-serie-3: #199e70;
+
+  --color-bom: #43b581;
+  --color-atencao: #d99a2b;
+  --color-grave: #e8823f;
+  --color-critico: #e66767;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-borda);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-superficie);
+    color: var(--color-texto);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-marca) 25%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-marca);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .tabela-rolavel {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .numerico {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Recharts herda a cor do texto em vez de usar o preto padrão. */
+.recharts-cartesian-axis-tick-value,
+.recharts-legend-item-text {
+  fill: var(--color-texto-2);
+  color: var(--color-texto-2) !important;
+  font-size: 0.75rem;
+}
+
+.recharts-cartesian-grid line {
+  stroke: var(--color-borda);
+}

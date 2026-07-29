@@ -1,0 +1,739 @@
+// ---------------------------------------------------------------------------
+// WR Consórcio — ERP Comercial
+// Modelo de dados append-only: nenhum registro relevante é removido fisicamente.
+// Alterações são versionadas em tabelas de histórico e auditadas.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum PerfilUsuario {
+  ADMINISTRADOR
+  GERENTE
+  SUPERVISOR
+  FINANCEIRO
+  RH
+}
+
+enum CategoriaVendedor {
+  INICIANTE
+  VETERANO
+  EXPERT
+}
+
+enum SituacaoVendedor {
+  ATIVO
+  INATIVO
+  AFASTADO
+  DESLIGADO
+}
+
+enum StatusRegistro {
+  ATIVO
+  INATIVO
+}
+
+enum SituacaoCota {
+  ATIVO
+  CANCELADO
+  CONTEMPLADO
+  QUITADO
+  TRANSFERIDO
+  EM_ATRASO
+  DESISTENTE
+  OUTRO
+}
+
+enum TipoLancamentoComissao {
+  PAGAMENTO_COMISSAO
+  INCLUSAO_DE_PLANO
+  CANCELAMENTO_DE_PLANO
+  /// Lançamento presente no relatório fora dos três tipos previstos.
+  /// É importado e exibido, mas não gera comissão WR sem regra definida.
+  OUTRO
+}
+
+enum StatusComissao {
+  NORMAL
+  ESTORNO
+  CANCELADO
+}
+
+enum OrigemVendedor {
+  ADMINISTRADORA
+  OVERRIDE_WR
+  NAO_IDENTIFICADO
+}
+
+enum TipoImportacao {
+  BASE_CSV
+  COMISSAO_PDF
+}
+
+enum StatusImportacao {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDA
+  CONCLUIDA_COM_ERROS
+  FALHA
+}
+
+enum AcaoAuditoria {
+  LOGIN
+  LOGOUT
+  LOGIN_FALHA
+  CRIACAO
+  ATUALIZACAO
+  INATIVACAO
+  REATIVACAO
+  IMPORTACAO
+  MUDANCA_CATEGORIA
+  TRANSFERENCIA_VENDEDOR
+  MUDANCA_EQUIPE
+  MUDANCA_GERENCIA
+  MUDANCA_PERCENTUAL
+  RECUPERACAO
+  ESTORNO
+  BACKUP
+  RECALCULO_COMISSAO
+}
+
+enum TipoBackup {
+  AUTOMATICO
+  MANUAL
+}
+
+enum StatusBackup {
+  PENDENTE
+  EXECUTANDO
+  CONCLUIDO
+  FALHA
+}
+
+// ---------------------------------------------------------------------------
+// Acesso e organização
+// ---------------------------------------------------------------------------
+
+model Usuario {
+  id            String        @id @default(cuid())
+  nome          String
+  email         String        @unique
+  senhaHash     String
+  perfil        PerfilUsuario
+  ativo         Boolean       @default(true)
+  // Escopo de visibilidade: gerente enxerga sua gerência, supervisor sua equipe.
+  gerenciaId    String?
+  equipeId      String?
+  ultimoLoginEm DateTime?
+  criadoEm      DateTime      @default(now())
+  atualizadoEm  DateTime      @updatedAt
+
+  gerencia Gerencia? @relation(fields: [gerenciaId], references: [id])
+  equipe   Equipe?   @relation(fields: [equipeId], references: [id])
+
+  auditorias            AuditLog[]
+  importacoes           Importacao[]
+  backups               Backup[]
+  categoriasRegistradas VendedorCategoriaHistorico[]
+  recuperacoes          VendedorRecuperacao[]
+  overridesCriados      CotaVendedorOverride[]
+  overridesHistorico    CotaVendedorOverrideHistorico[]
+  alocacoesRegistradas  VendedorAlocacaoHistorico[]
+
+  @@index([perfil, ativo])
+  @@index([gerenciaId])
+  @@index([equipeId])
+}
+
+model Gerencia {
+  id           String         @id @default(cuid())
+  nome         String         @unique
+  status       StatusRegistro @default(ATIVO)
+  criadoEm     DateTime       @default(now())
+  atualizadoEm DateTime       @updatedAt
+
+  equipes           Equipe[]
+  vendedores        Vendedor[]
+  usuarios          Usuario[]
+  cotas             Cota[]
+  comissoes         ComissaoRegistro[]
+  alocacaoHistorico VendedorAlocacaoHistorico[]
+
+  @@index([status])
+}
+
+model Equipe {
+  id           String         @id @default(cuid())
+  nome         String
+  gerenciaId   String
+  status       StatusRegistro @default(ATIVO)
+  criadoEm     DateTime       @default(now())
+  atualizadoEm DateTime       @updatedAt
+
+  gerencia Gerencia @relation(fields: [gerenciaId], references: [id])
+
+  vendedores        Vendedor[]
+  usuarios          Usuario[]
+  cotas             Cota[]
+  comissoes         ComissaoRegistro[]
+  alocacaoHistorico VendedorAlocacaoHistorico[]
+
+  @@unique([gerenciaId, nome])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Vendedores
+// ---------------------------------------------------------------------------
+
+model Vendedor {
+  id             String            @id @default(cuid())
+  nome           String
+  // Normalizado (somente dígitos) para casar com a base da administradora.
+  cpfCnpj        String            @unique
+  cpfCnpjFormatado String?
+  equipeId       String?
+  gerenciaId     String?
+  categoriaAtual CategoriaVendedor @default(INICIANTE)
+  dataEntradaWr  DateTime?         @db.Date
+  situacao       SituacaoVendedor  @default(ATIVO)
+  observacoes    String?
+  criadoEm       DateTime          @default(now())
+  atualizadoEm   DateTime          @updatedAt
+
+  equipe   Equipe?   @relation(fields: [equipeId], references: [id])
+  gerencia Gerencia? @relation(fields: [gerenciaId], references: [id])
+
+  historicoCategorias VendedorCategoriaHistorico[]
+  historicoAlocacoes  VendedorAlocacaoHistorico[]
+  recuperacoes        VendedorRecuperacao[]
+
+  cotasAdministradora Cota[]                          @relation("VendedorAdministradora")
+  cotasEfetivas       Cota[]                          @relation("VendedorEfetivo")
+  overrides           CotaVendedorOverride[]
+  overridesAnteriores CotaVendedorOverrideHistorico[] @relation("VendedorAnterior")
+  overridesNovos      CotaVendedorOverrideHistorico[] @relation("VendedorNovo")
+  comissoes           ComissaoRegistro[]
+
+  @@index([nome])
+  @@index([situacao])
+  @@index([equipeId])
+  @@index([gerenciaId])
+  @@index([categoriaAtual])
+}
+
+/// Append-only. A categoria vigente numa data é resolvida por esta tabela,
+/// nunca pela categoria atual do vendedor.
+model VendedorCategoriaHistorico {
+  id         String            @id @default(cuid())
+  vendedorId String
+  categoria  CategoriaVendedor
+  vigenteDe  DateTime          @db.Date
+  vigenteAte DateTime?         @db.Date
+  motivo     String?
+  usuarioId  String?
+  criadoEm   DateTime          @default(now())
+
+  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([vendedorId, vigenteDe])
+  @@index([vigenteDe, vigenteAte])
+}
+
+/// Append-only. Histórico de equipe/gerência do vendedor.
+model VendedorAlocacaoHistorico {
+  id         String    @id @default(cuid())
+  vendedorId String
+  equipeId   String?
+  gerenciaId String?
+  vigenteDe  DateTime  @db.Date
+  vigenteAte DateTime? @db.Date
+  motivo     String?
+  usuarioId  String?
+  criadoEm   DateTime  @default(now())
+
+  vendedor Vendedor  @relation(fields: [vendedorId], references: [id])
+  equipe   Equipe?   @relation(fields: [equipeId], references: [id])
+  gerencia Gerencia? @relation(fields: [gerenciaId], references: [id])
+  usuario  Usuario?  @relation(fields: [usuarioId], references: [id])
+
+  @@index([vendedorId, vigenteDe])
+}
+
+/// Períodos de recuperação. Vendas feitas dentro do intervalo ficam marcadas
+/// permanentemente na cota — encerrar a recuperação não desmarca nada.
+model VendedorRecuperacao {
+  id          String    @id @default(cuid())
+  vendedorId  String
+  dataInicio  DateTime  @db.Date
+  dataFim     DateTime  @db.Date
+  motivo      String?
+  encerradaEm DateTime?
+  usuarioId   String?
+  criadoEm    DateTime  @default(now())
+
+  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario? @relation(fields: [usuarioId], references: [id])
+  cotas    Cota[]
+
+  @@index([vendedorId, dataInicio, dataFim])
+  @@index([dataInicio, dataFim])
+}
+
+// ---------------------------------------------------------------------------
+// Administradoras e cotas (o "cliente" do sistema é a cota)
+// ---------------------------------------------------------------------------
+
+model Administradora {
+  id           String         @id @default(cuid())
+  nome         String         @unique
+  cnpj         String?
+  codigo       String?        @unique
+  status       StatusRegistro @default(ATIVO)
+  criadoEm     DateTime       @default(now())
+  atualizadoEm DateTime       @updatedAt
+
+  cotas       Cota[]
+  comissoes   ComissaoRegistro[]
+  importacoes Importacao[]
+
+  @@index([status])
+}
+
+/// Identidade da cota = administradora + contrato + grupo + cota + CPF/CNPJ do
+/// cliente. Qualquer divergência nesse conjunto caracteriza outro registro.
+model Cota {
+  id               String @id @default(cuid())
+  administradoraId String
+  contrato         String
+  grupo            String
+  cota             String
+  cpfCnpjCliente   String
+
+  nomeCliente    String
+  tipoPessoa     String?
+  contatoCliente String?
+  emailCliente   String?
+  ufCliente      String?
+
+  dataVenda   DateTime? @db.Date
+  dataEntrada DateTime? @db.Date
+
+  situacao         SituacaoCota @default(ATIVO)
+  situacaoOriginal String?
+
+  diaVencimento  Int?
+  valorCredito   Decimal? @db.Decimal(18, 2)
+  valorParcela   Decimal? @db.Decimal(18, 2)
+  meioPagamento  String?
+  segmento       String?
+  produto        String?
+  prazo          Int?
+  parcelasPagas  Int      @default(0)
+  parcelasAntecipadas Int @default(0)
+  parcelasEmitidas    Int @default(0)
+  dataUltimoPagamento DateTime? @db.Date
+
+  contemplado             Boolean   @default(false)
+  dataContemplacao        DateTime? @db.Date
+  valorCreditoContemplado Decimal?  @db.Decimal(18, 2)
+
+  alienado      Boolean   @default(false)
+  dataAlienacao DateTime? @db.Date
+  taxaAdm       Decimal?  @db.Decimal(9, 4)
+  taxaFunres    Decimal?  @db.Decimal(9, 4)
+
+  temSeguro   Boolean  @default(false)
+  valorSeguro Decimal? @db.Decimal(18, 2)
+
+  temFlex  Boolean  @default(false)
+  taxaFlex Decimal? @db.Decimal(9, 4)
+
+  cpfCnpjParceiro           String?
+  cpfCnpjVendedorAdm        String?
+  nomeVendedorAdm           String?
+  cpfCnpjParceiroComercial  String?
+  nomeParceiroComercial     String?
+  origemVenda               String?
+
+  dataCancelamento DateTime? @db.Date
+
+  // Vendedor informado pela administradora.
+  vendedorAdmId String?
+  // Vendedor efetivo = override WR quando existir, senão o da administradora.
+  vendedorEfetivoId String?
+  origemVendedor    OrigemVendedor @default(ADMINISTRADORA)
+
+  // --- Snapshots imutáveis, gravados uma única vez na criação da venda ---
+  /// Categoria vigente do vendedor NA DATA DA VENDA. Nunca é recalculada.
+  categoriaVenda        CategoriaVendedor?
+  categoriaVendaFixadaEm DateTime?
+  /// Marcação permanente de venda realizada durante recuperação.
+  emRecuperacao         Boolean            @default(false)
+  recuperacaoId         String?
+  recuperacaoFixadaEm   DateTime?
+  /// Equipe/gerência no momento da venda, para relatórios históricos estáveis.
+  equipeId              String?
+  gerenciaId            String?
+
+  geraEstorno Boolean @default(false)
+
+  hashConteudo         String
+  primeiraImportacaoId String?
+  ultimaImportacaoId   String?
+  criadoEm             DateTime @default(now())
+  atualizadoEm         DateTime @updatedAt
+
+  administradora  Administradora       @relation(fields: [administradoraId], references: [id])
+  vendedorAdm     Vendedor?            @relation("VendedorAdministradora", fields: [vendedorAdmId], references: [id])
+  vendedorEfetivo Vendedor?            @relation("VendedorEfetivo", fields: [vendedorEfetivoId], references: [id])
+  equipe          Equipe?              @relation(fields: [equipeId], references: [id])
+  gerencia        Gerencia?            @relation(fields: [gerenciaId], references: [id])
+  recuperacao     VendedorRecuperacao? @relation(fields: [recuperacaoId], references: [id])
+
+  versoes           CotaVersao[]
+  override          CotaVendedorOverride?
+  overrideHistorico CotaVendedorOverrideHistorico[]
+  comissoes         ComissaoRegistro[]
+  estorno           Estorno?
+
+  @@unique([administradoraId, contrato, grupo, cota, cpfCnpjCliente], name: "identidadeCota")
+  @@index([dataVenda])
+  @@index([situacao, dataVenda])
+  @@index([vendedorEfetivoId, dataVenda])
+  @@index([equipeId, dataVenda])
+  @@index([gerenciaId, dataVenda])
+  @@index([cpfCnpjCliente])
+  @@index([nomeCliente])
+  @@index([administradoraId, grupo, cota])
+  @@index([contrato])
+  @@index([emRecuperacao])
+  @@index([contemplado])
+}
+
+/// Snapshot append-only do payload da administradora a cada importação em que
+/// a cota mudou. Garante que nenhuma informação antiga seja perdida.
+model CotaVersao {
+  id           String   @id @default(cuid())
+  cotaId       String
+  importacaoId String?
+  hashConteudo String
+  dados        Json
+  alteracoes   Json?
+  criadoEm     DateTime @default(now())
+
+  cota       Cota        @relation(fields: [cotaId], references: [id])
+  importacao Importacao? @relation(fields: [importacaoId], references: [id])
+
+  @@index([cotaId, criadoEm])
+  @@index([importacaoId])
+}
+
+/// Override interno da WR. Não altera a base da administradora.
+model CotaVendedorOverride {
+  id           String   @id @default(cuid())
+  cotaId       String   @unique
+  vendedorId   String
+  motivo       String?
+  criadoPorId  String?
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  cota     Cota     @relation(fields: [cotaId], references: [id])
+  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
+  criadoPor Usuario? @relation(fields: [criadoPorId], references: [id])
+
+  @@index([vendedorId])
+}
+
+model CotaVendedorOverrideHistorico {
+  id                   String   @id @default(cuid())
+  cotaId               String
+  vendedorAnteriorId   String?
+  vendedorNovoId       String?
+  vendedorAnteriorNome String?
+  vendedorNovoNome     String?
+  motivo               String
+  usuarioId            String?
+  usuarioNome          String?
+  criadoEm             DateTime @default(now())
+
+  cota             Cota      @relation(fields: [cotaId], references: [id])
+  vendedorAnterior Vendedor? @relation("VendedorAnterior", fields: [vendedorAnteriorId], references: [id])
+  vendedorNovo     Vendedor? @relation("VendedorNovo", fields: [vendedorNovoId], references: [id])
+  usuario          Usuario?  @relation(fields: [usuarioId], references: [id])
+
+  @@index([cotaId, criadoEm])
+}
+
+/// Registro do estorno gerado quando uma venda marcada em recuperação é
+/// cancelada antes da sexta parcela — independente de quando o cancelamento
+/// aconteça.
+model Estorno {
+  id                        String   @id @default(cuid())
+  cotaId                    String   @unique
+  motivo                    String
+  parcelasPagasNoCancelamento Int
+  dataCancelamento          DateTime @db.Date
+  valorReferencia           Decimal? @db.Decimal(18, 2)
+  criadoEm                  DateTime @default(now())
+
+  cota Cota @relation(fields: [cotaId], references: [id])
+
+  @@index([dataCancelamento])
+}
+
+// ---------------------------------------------------------------------------
+// Comissões
+// ---------------------------------------------------------------------------
+
+/// Cada linha do relatório de fechamento da administradora.
+model ComissaoRegistro {
+  id               String @id @default(cuid())
+  importacaoId     String
+  administradoraId String
+
+  contrato       String
+  grupo          String
+  cota           String
+  nomeCliente    String
+  contatoCliente String?
+  objeto         String?
+
+  valorCredito        Decimal  @db.Decimal(18, 2)
+  percentualFlex      Decimal? @db.Decimal(9, 4)
+  valorComissao       Decimal  @db.Decimal(18, 2)
+  valorDsr            Decimal? @db.Decimal(18, 2)
+  valorSeguro         Decimal? @db.Decimal(18, 2)
+  percentualComissao  Decimal? @db.Decimal(9, 4)
+
+  tipo TipoLancamentoComissao
+  /// Texto exato da coluna ORIGEM no relatório, preservado sempre.
+  tipoOriginal String
+  /// INCLUSAO DE PLANO é sempre parcela 1.
+  parcela Int
+
+  dataPagamento DateTime? @db.Date
+  dataContabil  DateTime? @db.Date
+  dataCheque    DateTime? @db.Date
+  dataVenda     DateTime? @db.Date
+  dataReferencia DateTime @db.Date
+
+  classificacaoObjeto String?
+  assinatura          String?
+
+  cpfCnpjVendedorRelatorio String?
+  nomeVendedorRelatorio    String?
+
+  cotaId         String?
+  vendedorId     String?
+  origemVendedor OrigemVendedor @default(NAO_IDENTIFICADO)
+  equipeId       String?
+  gerenciaId     String?
+
+  categoriaVenda CategoriaVendedor?
+  emRecuperacao  Boolean            @default(false)
+  status         StatusComissao     @default(NORMAL)
+
+  hashRegistro String @unique
+  paginaPdf    Int?
+  ordemPdf     Int?
+
+  criadoEm DateTime @default(now())
+
+  importacao     Importacao     @relation(fields: [importacaoId], references: [id])
+  administradora Administradora @relation(fields: [administradoraId], references: [id])
+  cotaRef        Cota?          @relation(fields: [cotaId], references: [id])
+  vendedor       Vendedor?      @relation(fields: [vendedorId], references: [id])
+  equipe         Equipe?        @relation(fields: [equipeId], references: [id])
+  gerencia       Gerencia?      @relation(fields: [gerenciaId], references: [id])
+
+  comissaoWr ComissaoWr?
+
+  @@index([dataReferencia])
+  @@index([tipo, dataReferencia])
+  @@index([vendedorId, dataReferencia])
+  @@index([equipeId, dataReferencia])
+  @@index([gerenciaId, dataReferencia])
+  @@index([administradoraId, dataReferencia])
+  @@index([status])
+  @@index([cotaId])
+  @@index([importacaoId])
+  @@index([grupo, cota])
+}
+
+/// Comissão calculada pela WR sobre o registro do relatório.
+model ComissaoWr {
+  id                 String  @id @default(cuid())
+  comissaoRegistroId String  @unique
+  categoriaVenda     CategoriaVendedor?
+  parcela            Int
+  baseCalculo        Decimal @db.Decimal(18, 2)
+  percentual         Decimal @db.Decimal(9, 4)
+  valor              Decimal @db.Decimal(18, 2)
+  regra              String
+  observacao         String?
+  tabelaComissaoId   String?
+  modalidadeFlexId   String?
+  calculadoEm        DateTime @default(now())
+
+  comissaoRegistro ComissaoRegistro @relation(fields: [comissaoRegistroId], references: [id], onDelete: Cascade)
+  tabelaComissao   TabelaComissao?  @relation(fields: [tabelaComissaoId], references: [id])
+  modalidadeFlex   ModalidadeFlex?  @relation(fields: [modalidadeFlexId], references: [id])
+
+  @@index([categoriaVenda])
+  @@index([calculadoEm])
+}
+
+/// Tabela de percentuais por parcela. Versionada por vigência — alterar
+/// percentuais nunca reescreve o histórico já calculado.
+model TabelaComissao {
+  id           String            @id @default(cuid())
+  nome         String
+  categoria    CategoriaVendedor
+  vigenteDe    DateTime          @db.Date
+  vigenteAte   DateTime?         @db.Date
+  ativo        Boolean           @default(true)
+  criadoEm     DateTime          @default(now())
+  atualizadoEm DateTime          @updatedAt
+
+  faixas     FaixaComissao[]
+  comissoes  ComissaoWr[]
+
+  @@index([categoria, vigenteDe])
+}
+
+model FaixaComissao {
+  id         String   @id @default(cuid())
+  tabelaId   String
+  parcela    Int
+  percentual Decimal  @db.Decimal(9, 4)
+  criadoEm   DateTime @default(now())
+
+  tabela TabelaComissao @relation(fields: [tabelaId], references: [id], onDelete: Cascade)
+
+  @@unique([tabelaId, parcela])
+}
+
+model ModalidadeFlex {
+  id           String   @id @default(cuid())
+  nome         String   @unique
+  percentual   Decimal  @db.Decimal(9, 4)
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  comissoes ComissaoWr[]
+}
+
+// ---------------------------------------------------------------------------
+// Importações, auditoria e backup
+// ---------------------------------------------------------------------------
+
+model Importacao {
+  id               String           @id @default(cuid())
+  tipo             TipoImportacao
+  nomeArquivo      String
+  tamanhoBytes     Int
+  hashArquivo      String
+  administradoraId String?
+  usuarioId        String?
+  usuarioNome      String?
+  status           StatusImportacao @default(PENDENTE)
+  iniciadoEm       DateTime         @default(now())
+  finalizadoEm     DateTime?
+
+  totalLinhas      Int @default(0)
+  qtdCriados       Int @default(0)
+  qtdAtualizados   Int @default(0)
+  qtdInalterados   Int @default(0)
+  qtdDuplicados    Int @default(0)
+  qtdCancelados    Int @default(0)
+  qtdContemplados  Int @default(0)
+  qtdErros         Int @default(0)
+
+  resumo Json?
+
+  administradora Administradora? @relation(fields: [administradoraId], references: [id])
+  usuario        Usuario?        @relation(fields: [usuarioId], references: [id])
+
+  erros      ImportacaoErro[]
+  versoes    CotaVersao[]
+  comissoes  ComissaoRegistro[]
+
+  @@index([tipo, iniciadoEm])
+  @@index([status])
+  @@index([hashArquivo])
+}
+
+model ImportacaoErro {
+  id           String   @id @default(cuid())
+  importacaoId String
+  linha        Int?
+  mensagem     String
+  conteudo     String?
+  criadoEm     DateTime @default(now())
+
+  importacao Importacao @relation(fields: [importacaoId], references: [id], onDelete: Cascade)
+
+  @@index([importacaoId])
+}
+
+model AuditLog {
+  id          String        @id @default(cuid())
+  usuarioId   String?
+  usuarioNome String?
+  acao        AcaoAuditoria
+  entidade    String
+  entidadeId  String?
+  descricao   String
+  dadosAntes  Json?
+  dadosDepois Json?
+  ip          String?
+  userAgent   String?
+  criadoEm    DateTime      @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([criadoEm])
+  @@index([entidade, entidadeId])
+  @@index([usuarioId, criadoEm])
+  @@index([acao, criadoEm])
+}
+
+model Backup {
+  id           String       @id @default(cuid())
+  tipo         TipoBackup
+  status       StatusBackup @default(PENDENTE)
+  nomeArquivo  String
+  caminho      String?
+  tamanhoBytes Int?
+  iniciadoEm   DateTime     @default(now())
+  finalizadoEm DateTime?
+  erro         String?
+  usuarioId    String?
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([iniciadoEm])
+  @@index([status])
+}
+
+model ConfiguracaoSistema {
+  id           String   @id @default(cuid())
+  chave        String   @unique
+  valor        Json
+  descricao    String?
+  atualizadoEm DateTime @updatedAt
+}
