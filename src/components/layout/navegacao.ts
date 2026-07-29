@@ -16,6 +16,7 @@ export const NAVEGACAO: readonly ItemNavegacao[] = [
   { href: "/importacoes", rotulo: "Importações", modulo: "importacoes", icone: "importacoes", grupo: "Operação" },
 
   { href: "/vendedores", rotulo: "Vendedores", modulo: "vendedores", icone: "vendedores", grupo: "Cadastros" },
+  { href: "/pendencias", rotulo: "Pendências de cadastro", modulo: "vendedores", icone: "pendencias", grupo: "Cadastros" },
   { href: "/equipes", rotulo: "Equipes", modulo: "equipes", icone: "equipes", grupo: "Cadastros" },
   { href: "/gerencias", rotulo: "Gerências", modulo: "gerencias", icone: "gerencias", grupo: "Cadastros" },
   { href: "/tabelas", rotulo: "Tabelas e Flex", modulo: "tabelas", icone: "tabelas", grupo: "Cadastros" },

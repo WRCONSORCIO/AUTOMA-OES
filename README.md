@@ -88,9 +88,13 @@ exporte `SEED_ADMIN_SENHA` (e opcionalmente `SEED_ADMIN_EMAIL`) antes de rodar.
 1. **Importações → Base de clientes (CSV).** Cria as cotas e os vendedores que
    aparecem na base, já com o CPF/CNPJ real.
 2. **Cadastros → Gerências e Equipes.** Confira a estrutura criada pelo seed.
-3. **Complete o cadastro dos vendedores** (categoria, equipe e gerência). Para
-   carregar em lote a partir da planilha de controle, salve-a como CSV com as
-   colunas `VENDEDOR;CATEGORIA;SUPERVISAO;GERENCIA` e rode:
+3. **Cadastros → Pendências de cadastro.** Lista os vendedores cujas vendas
+   ainda não geram comissão, com quantos lançamentos e quanto valor estão
+   travados. Resolver ali registra a categoria (com a data de início já
+   sugerida pela primeira venda do vendedor) e dispara o recálculo.
+
+   Para completar o cadastro em lote a partir da planilha de controle, salve-a
+   como CSV com as colunas `VENDEDOR;CATEGORIA;SUPERVISAO;GERENCIA` e rode:
    ```bash
    npx tsx scripts/importar-cadastro-vendedores.ts cadastro.csv          # simula
    npx tsx scripts/importar-cadastro-vendedores.ts cadastro.csv --aplicar
@@ -103,7 +107,8 @@ exporte `SEED_ADMIN_SENHA` (e opcionalmente `SEED_ADMIN_EMAIL`) antes de rodar.
 > Vendedor criado automaticamente pela importação fica **sem categoria** e não
 > gera comissão WR até que a categoria seja registrada com a data de início
 > correta. Isso é intencional: o sistema não inventa uma categoria para calcular
-> dinheiro.
+> dinheiro. A tela **Pendências de cadastro** mostra exatamente o que está
+> travado e quanto vale, para o RH resolver sem precisar caçar caso a caso.
 
 ## Backup
 
