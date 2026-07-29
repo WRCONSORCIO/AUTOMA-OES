@@ -10,7 +10,11 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Conexão da aplicação. Em ambiente serverless, use a URL com pooler.
+  url       = env("DATABASE_URL")
+  // Conexão direta, sem pooler, usada pelas migrations.
+  // Sem pooler, aponte para o mesmo valor de DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------

@@ -110,6 +110,67 @@ exporte `SEED_ADMIN_SENHA` (e opcionalmente `SEED_ADMIN_EMAIL`) antes de rodar.
 > dinheiro. A tela **Pendências de cadastro** mostra exatamente o que está
 > travado e quanto vale, para o RH resolver sem precisar caçar caso a caso.
 
+## Colocando em produção
+
+O sistema é um servidor Next.js com Prisma contra um PostgreSQL próprio. Ele
+**não** roda em plataformas que publicam apenas frontend estático.
+
+### Vercel + Postgres gerenciado (recomendado)
+
+1. **Crie o banco** (Neon, Supabase — apenas o Postgres — ou RDS). Guarde as
+   duas strings de conexão: a **com pooler** e a **direta**.
+2. **Importe o repositório na Vercel.** O framework é detectado sozinho; o
+   script `vercel-build` já aplica as migrations antes do build.
+3. **Configure as variáveis de ambiente** (Production e Preview):
+
+   | Variável | Valor |
+   |---|---|
+   | `DATABASE_URL` | string **com pooler** |
+   | `DIRECT_URL` | string **direta**, usada pelas migrations |
+   | `AUTH_SECRET` | `openssl rand -base64 48` |
+   | `BACKUP_CRON_TOKEN` | opcional, só se for usar a rota de backup |
+
+4. **Faça o deploy.** As migrations rodam automaticamente.
+5. **Rode a carga inicial uma única vez**, da sua máquina, apontando para o
+   banco de produção:
+   ```bash
+   DATABASE_URL="<direta>" DIRECT_URL="<direta>" npm run db:seed
+   ```
+   Anote a senha do administrador exibida no final.
+6. **Entre no sistema** e troque a senha em Usuários.
+
+**Backup na Vercel:** o runtime serverless não tem `pg_dump`, então o botão
+*Gerar Backup* falha nesse ambiente. Use o backup automático do provedor do
+banco (Neon e Supabase oferecem) ou rode `npm run backup:run` de uma máquina
+com o utilitário instalado. A tela de Backups continua servindo de histórico.
+
+**Limite de tempo:** a rota de importação declara `maxDuration = 300`. No plano
+Hobby da Vercel o teto é 60 s — suficiente para os arquivos atuais, mas bases
+muito grandes exigem o plano Pro ou o deploy em servidor próprio.
+
+### Servidor próprio (VPS)
+
+Vale quando você quer o backup funcionando dentro do próprio sistema.
+
+```bash
+git clone <repo> && cd AUTOMA-OES
+cp .env.example .env        # DATABASE_URL e DIRECT_URL com o mesmo valor
+npm ci
+npx prisma migrate deploy
+npm run db:seed
+npm run build
+npm start                   # sob pm2, systemd ou Docker
+```
+
+Coloque um nginx na frente com HTTPS e agende o backup diário:
+
+```
+0 3 * * * cd /opt/wr-consorcio && npm run backup:run >> /var/log/wr-backup.log 2>&1
+```
+
+Requisitos: Node 20+, PostgreSQL 14+ e os utilitários de cliente do Postgres
+(`pg_dump`) instalados no servidor.
+
 ## Backup
 
 Botão **Gerar Backup** na tela de Backups, e backup diário pelo agendador:
