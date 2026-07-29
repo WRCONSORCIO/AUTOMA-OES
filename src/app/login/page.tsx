@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { lerSessao } from "@/server/auth/session";
+import { sistemaInstalado } from "@/server/services/instalacao";
 import { FormularioLogin } from "./formulario";
 
 export const metadata: Metadata = { title: "Entrar" };
+export const dynamic = "force-dynamic";
 
 export default async function PaginaLogin({
   searchParams,
@@ -11,6 +13,8 @@ export default async function PaginaLogin({
   searchParams: Promise<{ erro?: string }>;
 }) {
   if (await lerSessao()) redirect("/");
+  // Banco recém-criado: leva direto para a configuração inicial.
+  if (!(await sistemaInstalado())) redirect("/configuracao-inicial");
 
   const { erro } = await searchParams;
 

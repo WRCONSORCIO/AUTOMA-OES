@@ -1,101 +1,27 @@
 /**
- * Carga inicial do sistema.
+ * Carga inicial pela linha de comando.
  *
- * Cria apenas o que é estrutural e verificável: administradora, gerências,
- * equipes, modalidades de flex, a tabela de comissão de Iniciante e o usuário
- * administrador. O cadastro de vendedores não é semeado com dados fictícios —
- * ele vem da importação da base (que traz o CPF/CNPJ real) e é complementado
- * por `scripts/importar-cadastro-vendedores.ts`.
+ * Alternativa à tela de configuração inicial, útil para automatizar a
+ * implantação. Cria a mesma estrutura (administradora, gerências, equipes,
+ * modalidades de flex e a tabela de Iniciante) mais o usuário administrador.
  *
- * O script é idempotente: rodar de novo não duplica nada.
+ * O cadastro de vendedores não é semeado com dados fictícios: ele vem da
+ * importação da base, que traz o CPF/CNPJ real.
+ *
+ * Idempotente: rodar de novo não duplica nada.
  */
 import { randomBytes } from "node:crypto";
-import { Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-
-const prisma = new PrismaClient();
-
-/** Estrutura comercial atual da WR: gerência → equipes (supervisões). */
-const ESTRUTURA: Record<string, string[]> = {
-  CHARLES: ["CHARLES"],
-  ERITA: ["ERITA", "SABRINA", "LUCAS"],
-  RAFAEL: ["RAFAEL", "NIKSON"],
-};
-
-const MODALIDADES_FLEX = [
-  { nome: "Integral", percentual: "100.0000" },
-  { nome: "Flex 50", percentual: "50.0000" },
-  { nome: "Flex 30", percentual: "30.0000" },
-];
-
-/** Tabela de Iniciante. Parcelas acima da 4ª não geram comissão WR. */
-const FAIXAS_INICIANTE = [
-  { parcela: 1, percentual: "4.0000" },
-  { parcela: 2, percentual: "3.0000" },
-  { parcela: 3, percentual: "2.0000" },
-  { parcela: 4, percentual: "1.0000" },
-];
+import { prisma } from "@/lib/prisma";
+import { criarEstruturaInicial } from "@/server/services/instalacao";
 
 async function main() {
-  const administradora = await prisma.administradora.upsert({
-    where: { nome: "SERVOPA" },
-    update: {},
-    create: {
-      nome: "SERVOPA",
-      cnpj: "76.599.633/0001-15",
-      codigo: "SERVOPA",
-    },
-  });
-  console.log(`administradora: ${administradora.nome}`);
+  const resumo = await criarEstruturaInicial();
 
-  for (const [nomeGerencia, equipes] of Object.entries(ESTRUTURA)) {
-    const gerencia = await prisma.gerencia.upsert({
-      where: { nome: nomeGerencia },
-      update: {},
-      create: { nome: nomeGerencia },
-    });
-
-    for (const nomeEquipe of equipes) {
-      await prisma.equipe.upsert({
-        where: { gerenciaId_nome: { gerenciaId: gerencia.id, nome: nomeEquipe } },
-        update: {},
-        create: { nome: nomeEquipe, gerenciaId: gerencia.id },
-      });
-    }
-
-    console.log(`gerência ${nomeGerencia}: ${equipes.length} equipe(s)`);
-  }
-
-  for (const modalidade of MODALIDADES_FLEX) {
-    await prisma.modalidadeFlex.upsert({
-      where: { nome: modalidade.nome },
-      update: {},
-      create: {
-        nome: modalidade.nome,
-        percentual: new Prisma.Decimal(modalidade.percentual),
-      },
-    });
-  }
-  console.log(`modalidades flex: ${MODALIDADES_FLEX.length}`);
-
-  const tabelaExistente = await prisma.tabelaComissao.findFirst({
-    where: { categoria: "INICIANTE", vigenteAte: null },
-  });
-
-  if (!tabelaExistente) {
-    await prisma.tabelaComissao.create({
-      data: {
-        nome: "Iniciante — tabela padrão",
-        categoria: "INICIANTE",
-        vigenteDe: new Date(Date.UTC(2026, 0, 1)),
-        faixas: {
-          create: FAIXAS_INICIANTE.map((faixa) => ({
-            parcela: faixa.parcela,
-            percentual: new Prisma.Decimal(faixa.percentual),
-          })),
-        },
-      },
-    });
+  console.log(`administradora: ${resumo.administradora}`);
+  console.log(`gerências: ${resumo.gerencias} · equipes: ${resumo.equipes}`);
+  console.log(`modalidades flex: ${resumo.modalidades}`);
+  if (resumo.tabelaCriada) {
     console.log("tabela de comissão de Iniciante criada (4% / 3% / 2% / 1%)");
   }
 

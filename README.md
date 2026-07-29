@@ -131,13 +131,15 @@ O sistema é um servidor Next.js com Prisma contra um PostgreSQL próprio. Ele
    | `BACKUP_CRON_TOKEN` | opcional, só se for usar a rota de backup |
 
 4. **Faça o deploy.** As migrations rodam automaticamente.
-5. **Rode a carga inicial uma única vez**, da sua máquina, apontando para o
-   banco de produção:
+5. **Abra a URL do projeto.** Com o banco vazio, o sistema leva direto para a
+   tela de **configuração inicial**: você cria o acesso do administrador e a
+   estrutura (administradora, gerências, equipes, modalidades de flex e a
+   tabela de Iniciante) é criada junto. A tela se fecha sozinha depois disso.
+
+   Se preferir automatizar, o mesmo resultado sai por linha de comando:
    ```bash
    DATABASE_URL="<direta>" DIRECT_URL="<direta>" npm run db:seed
    ```
-   Anote a senha do administrador exibida no final.
-6. **Entre no sistema** e troque a senha em Usuários.
 
 **Backup na Vercel:** o runtime serverless não tem `pg_dump`, então o botão
 *Gerar Backup* falha nesse ambiente. Use o backup automático do provedor do
@@ -157,10 +159,12 @@ git clone <repo> && cd AUTOMA-OES
 cp .env.example .env        # DATABASE_URL e DIRECT_URL com o mesmo valor
 npm ci
 npx prisma migrate deploy
-npm run db:seed
 npm run build
 npm start                   # sob pm2, systemd ou Docker
 ```
+
+No primeiro acesso, o sistema abre a tela de configuração inicial para criar o
+administrador. Alternativamente, rode `npm run db:seed` antes de subir.
 
 Coloque um nginx na frente com HTTPS e agende o backup diário:
 
