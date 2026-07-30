@@ -204,7 +204,7 @@ function montarCondicoesSql(where: Prisma.ComissaoRegistroWhereInput): Prisma.Sq
   return Prisma.join(partes, " AND ");
 }
 
-type Dimensao = "vendedorId" | "equipeId" | "gerenciaId" | "administradoraId";
+type Dimensao = "vendedorId" | "equipeId" | "gerenciaId" | "administradoraId" | "pessoaId";
 
 export async function carregarRanking(
   dimensao: Dimensao,
@@ -213,18 +213,30 @@ export async function carregarRanking(
   limite = 10,
 ): Promise<ItemRanking[]> {
   const condicoes = montarCondicoesSql(filtroComissao(filtro, escopo));
-  const coluna = Prisma.raw(`"${dimensao}"`);
+
+  // A pessoa agrupa os documentos do mesmo vendedor (CPF e CNPJs), então o
+  // ranking por pessoa soma tudo numa linha só.
+  const chave =
+    dimensao === "pessoaId"
+      ? Prisma.sql`v."pessoaId"`
+      : Prisma.sql`cr.${Prisma.raw(`"${dimensao}"`)}`;
+
+  const juncaoVendedor =
+    dimensao === "pessoaId"
+      ? Prisma.sql`JOIN "Vendedor" v ON v."id" = cr."vendedorId"`
+      : Prisma.empty;
 
   const linhas = await prisma.$queryRaw<
     { id: string; valor: Prisma.Decimal | null; comissao_wr: Prisma.Decimal | null; quantidade: bigint }[]
   >`
-    SELECT cr.${coluna}                  AS id,
+    SELECT ${chave}                      AS id,
            SUM(cr."valorComissao")       AS valor,
            SUM(COALESCE(cw."valor", 0))  AS comissao_wr,
            COUNT(*)                      AS quantidade
       FROM "ComissaoRegistro" cr
+      ${juncaoVendedor}
       LEFT JOIN "ComissaoWr" cw ON cw."comissaoRegistroId" = cr."id"
-     WHERE ${condicoes} AND cr.${coluna} IS NOT NULL
+     WHERE ${condicoes} AND ${chave} IS NOT NULL
      GROUP BY 1
      ORDER BY 2 DESC
      LIMIT ${limite}
@@ -251,7 +263,9 @@ async function carregarNomes(dimensao: Dimensao, ids: string[]): Promise<Map<str
   const selecao = { id: true, nome: true };
 
   const registros =
-    dimensao === "vendedorId"
+    dimensao === "pessoaId"
+      ? await prisma.pessoa.findMany({ where, select: selecao })
+      : dimensao === "vendedorId"
       ? await prisma.vendedor.findMany({ where, select: selecao })
       : dimensao === "equipeId"
         ? await prisma.equipe.findMany({ where, select: selecao })

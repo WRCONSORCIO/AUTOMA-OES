@@ -119,18 +119,22 @@ export async function carregarPendenciasCadastro(
         observacoes: true,
         equipeId: true,
         gerenciaId: true,
+        pessoaId: true,
         equipe: { select: { nome: true } },
         gerencia: { select: { nome: true } },
       },
     }),
+    // O histórico é da pessoa: um documento novo herda a categoria dela.
     prisma.vendedorCategoriaHistorico.groupBy({
-      by: ["vendedorId"],
-      where: { vendedorId: { in: ids } },
+      by: ["pessoaId"],
+      where: { pessoa: { documentos: { some: { id: { in: ids } } } } },
     }),
   ]);
 
   const porId = new Map(vendedores.map((vendedor) => [vendedor.id, vendedor]));
-  const idsComHistorico = new Set(comHistorico.map((item) => item.vendedorId));
+  const pessoasComHistorico = new Set(
+    comHistorico.map((item) => item.pessoaId).filter((id): id is string => Boolean(id)),
+  );
 
   const itens: PendenciaCadastro[] = [];
   let totalLancamentos = 0;
@@ -156,7 +160,9 @@ export async function carregarPendenciasCadastro(
       criadoPelaImportacao: Boolean(
         vendedor.observacoes?.startsWith("Criado automaticamente pela importação"),
       ),
-      temHistoricoCategoria: idsComHistorico.has(vendedor.id),
+      temHistoricoCategoria: vendedor.pessoaId
+        ? pessoasComHistorico.has(vendedor.pessoaId)
+        : false,
       equipeId: vendedor.equipeId,
       gerenciaId: vendedor.gerenciaId,
       equipeNome: vendedor.equipe?.nome ?? null,

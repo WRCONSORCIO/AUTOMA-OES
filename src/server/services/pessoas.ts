@@ -1,0 +1,469 @@
+import "server-only";
+
+import type { Prisma, PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { normalizarTexto } from "@/lib/normalize";
+import { registrarAuditoria } from "./auditoria";
+import type { ContextoUsuario } from "./vendedores";
+
+type Cliente = Prisma.TransactionClient | PrismaClient;
+
+/**
+ * A pessoa agrupa os cadastros de vendedor de um mesmo indivíduo.
+ *
+ * O vendedor entra vendendo no CPF e passa a operar por CNPJ ao mudar de
+ * categoria, então a mesma pessoa acumula vários documentos. Categoria e
+ * recuperação pertencem à pessoa; o documento continua sendo a unidade que a
+ * administradora paga.
+ *
+ * Nada aqui altera venda já gravada: categoria e recuperação da venda são
+ * fotografias tiradas na importação e permanecem intocadas.
+ */
+
+export async function criarPessoaParaVendedor(
+  vendedor: { id: string; nome: string; cpfCnpj: string },
+  db: Cliente = prisma,
+  usuario?: ContextoUsuario,
+): Promise<string> {
+  const pessoa = await db.pessoa.create({ data: { nome: vendedor.nome } });
+
+  await db.vendedor.update({
+    where: { id: vendedor.id },
+    data: { pessoaId: pessoa.id },
+  });
+
+  await db.pessoaVinculoHistorico.create({
+    data: {
+      pessoaId: pessoa.id,
+      vendedorId: vendedor.id,
+      vendedorNome: vendedor.nome,
+      vendedorDocumento: vendedor.cpfCnpj,
+      acao: "VINCULO",
+      motivo: "Pessoa criada junto com o cadastro",
+      automatico: !usuario,
+      usuarioId: usuario?.id ?? null,
+      usuarioNome: usuario?.nome ?? null,
+    },
+  });
+
+  return pessoa.id;
+}
+
+/**
+ * Liga um cadastro recém-criado a uma pessoa que já existe — o caso do
+ * vendedor que abre CNPJ e já tinha o cadastro no CPF.
+ */
+export async function vincularAPessoaExistente(
+  db: Cliente,
+  vendedor: { id: string; nome: string; cpfCnpj: string },
+  pessoaId: string,
+  usuario: ContextoUsuario,
+): Promise<string> {
+  const pessoa = await db.pessoa.findUnique({
+    where: { id: pessoaId },
+    select: { id: true },
+  });
+  if (!pessoa) throw new Error("Pessoa informada não foi encontrada.");
+
+  await db.vendedor.update({
+    where: { id: vendedor.id },
+    data: { pessoaId },
+  });
+
+  await db.pessoaVinculoHistorico.create({
+    data: {
+      pessoaId,
+      vendedorId: vendedor.id,
+      vendedorNome: vendedor.nome,
+      vendedorDocumento: vendedor.cpfCnpj,
+      acao: "VINCULO",
+      motivo: "Documento adicional cadastrado para a mesma pessoa",
+      usuarioId: usuario.id,
+      usuarioNome: usuario.nome,
+    },
+  });
+
+  return pessoaId;
+}
+
+// ---------------------------------------------------------------------------
+// Sugestões de vínculo
+// ---------------------------------------------------------------------------
+
+export interface DocumentoSugerido {
+  vendedorId: string;
+  pessoaId: string;
+  nome: string;
+  cpfCnpj: string;
+  tipo: "CPF" | "CNPJ" | "OUTRO";
+  categoriaAtual: string;
+  equipeNome: string | null;
+  gerenciaNome: string | null;
+  cotas: number;
+}
+
+export interface SugestaoVinculo {
+  chave: string;
+  nomeNormalizado: string;
+  documentos: DocumentoSugerido[];
+}
+
+function tipoDocumento(cpfCnpj: string): "CPF" | "CNPJ" | "OUTRO" {
+  if (cpfCnpj.length === 11) return "CPF";
+  if (cpfCnpj.length === 14) return "CNPJ";
+  return "OUTRO";
+}
+
+/**
+ * Agrupa por nome normalizado os cadastros que hoje estão em pessoas
+ * diferentes. A sugestão nunca vincula sozinha — quem confirma é o usuário.
+ */
+export async function sugerirVinculos(): Promise<SugestaoVinculo[]> {
+  const vendedores = await prisma.vendedor.findMany({
+    select: {
+      id: true,
+      nome: true,
+      cpfCnpj: true,
+      pessoaId: true,
+      categoriaAtual: true,
+      equipe: { select: { nome: true } },
+      gerencia: { select: { nome: true } },
+      _count: { select: { cotasEfetivas: true } },
+    },
+    orderBy: { nome: "asc" },
+  });
+
+  const porNome = new Map<string, typeof vendedores>();
+  for (const vendedor of vendedores) {
+    const chave = normalizarTexto(vendedor.nome);
+    if (!chave) continue;
+    const grupo = porNome.get(chave);
+    if (grupo) grupo.push(vendedor);
+    else porNome.set(chave, [vendedor]);
+  }
+
+  const sugestoes: SugestaoVinculo[] = [];
+
+  for (const [chave, grupo] of porNome) {
+    if (grupo.length < 2) continue;
+
+    // Já estão todos na mesma pessoa: não há o que sugerir.
+    const pessoas = new Set(grupo.map((item) => item.pessoaId));
+    if (pessoas.size < 2) continue;
+
+    sugestoes.push({
+      chave,
+      nomeNormalizado: chave,
+      documentos: grupo.map((item) => ({
+        vendedorId: item.id,
+        pessoaId: item.pessoaId ?? "",
+        nome: item.nome,
+        cpfCnpj: item.cpfCnpj,
+        tipo: tipoDocumento(item.cpfCnpj),
+        categoriaAtual: item.categoriaAtual,
+        equipeNome: item.equipe?.nome ?? null,
+        gerenciaNome: item.gerencia?.nome ?? null,
+        cotas: item._count.cotasEfetivas,
+      })),
+    });
+  }
+
+  return sugestoes.sort((a, b) => b.documentos.length - a.documentos.length);
+}
+
+// ---------------------------------------------------------------------------
+// Vínculo e separação
+// ---------------------------------------------------------------------------
+
+export interface ResultadoVinculo {
+  pessoaId: string;
+  documentosVinculados: number;
+}
+
+/**
+ * Junta os cadastros informados sob uma única pessoa.
+ *
+ * A pessoa de destino recebe os documentos e também os períodos de categoria e
+ * recuperação das pessoas de origem — o histórico é somado, não substituído.
+ * Pessoas que ficam sem documento são preservadas para não quebrar o histórico
+ * de vínculos, mas deixam de aparecer nas listagens.
+ */
+export async function vincularDocumentos(
+  entrada: { vendedorIds: string[]; pessoaDestinoId?: string; motivo: string },
+  usuario: ContextoUsuario,
+): Promise<ResultadoVinculo> {
+  const motivo = entrada.motivo.trim();
+  if (!motivo) throw new Error("Informe o motivo do vínculo.");
+  if (entrada.vendedorIds.length < 2 && !entrada.pessoaDestinoId) {
+    throw new Error("Selecione ao menos dois cadastros para vincular.");
+  }
+
+  const vendedores = await prisma.vendedor.findMany({
+    where: { id: { in: entrada.vendedorIds } },
+    select: { id: true, nome: true, cpfCnpj: true, pessoaId: true },
+  });
+
+  if (vendedores.length !== entrada.vendedorIds.length) {
+    throw new Error("Algum cadastro selecionado não foi encontrado.");
+  }
+
+  // Destino: o informado ou, por padrão, a pessoa do primeiro documento —
+  // normalmente o CPF, que é por onde o vendedor começou.
+  const destinoId =
+    entrada.pessoaDestinoId ?? vendedores[0]?.pessoaId ?? null;
+  if (!destinoId) {
+    throw new Error("Não foi possível determinar a pessoa de destino.");
+  }
+
+  const origens = [
+    ...new Set(
+      vendedores
+        .map((vendedor) => vendedor.pessoaId)
+        .filter((id): id is string => Boolean(id) && id !== destinoId),
+    ),
+  ];
+
+  await prisma.$transaction(async (tx) => {
+    for (const vendedor of vendedores) {
+      if (vendedor.pessoaId === destinoId) continue;
+
+      await tx.vendedor.update({
+        where: { id: vendedor.id },
+        data: { pessoaId: destinoId },
+      });
+
+      await tx.pessoaVinculoHistorico.create({
+        data: {
+          pessoaId: destinoId,
+          vendedorId: vendedor.id,
+          vendedorNome: vendedor.nome,
+          vendedorDocumento: vendedor.cpfCnpj,
+          acao: "VINCULO",
+          motivo,
+          usuarioId: usuario.id,
+          usuarioNome: usuario.nome,
+        },
+      });
+    }
+
+    if (origens.length > 0) {
+      // Categoria e recuperação seguem os documentos para a pessoa de destino.
+      await tx.vendedorCategoriaHistorico.updateMany({
+        where: { pessoaId: { in: origens } },
+        data: { pessoaId: destinoId },
+      });
+      await tx.vendedorRecuperacao.updateMany({
+        where: { pessoaId: { in: origens } },
+        data: { pessoaId: destinoId },
+      });
+    }
+  });
+
+  await registrarAuditoria({
+    acao: "ATUALIZACAO",
+    entidade: "Pessoa",
+    entidadeId: destinoId,
+    descricao: `${vendedores.length} cadastro(s) vinculados à mesma pessoa: ${vendedores
+      .map((vendedor) => vendedor.cpfCnpj)
+      .join(", ")}`,
+    dadosDepois: {
+      pessoaDestino: destinoId,
+      pessoasOrigem: origens,
+      documentos: vendedores.map((vendedor) => ({
+        id: vendedor.id,
+        nome: vendedor.nome,
+        cpfCnpj: vendedor.cpfCnpj,
+      })),
+      motivo,
+    },
+    usuario,
+  });
+
+  return { pessoaId: destinoId, documentosVinculados: vendedores.length };
+}
+
+/**
+ * Retira um documento da pessoa e o coloca numa pessoa nova.
+ *
+ * Os períodos de categoria e recuperação permanecem com a pessoa original —
+ * eles são do indivíduo, não do documento, e não há como saber a qual parte
+ * pertenciam. O cadastro separado começa sem categoria e precisa de um novo
+ * registro para voltar a gerar comissão.
+ */
+export async function separarDocumento(
+  entrada: { vendedorId: string; motivo: string },
+  usuario: ContextoUsuario,
+): Promise<{ pessoaId: string }> {
+  const motivo = entrada.motivo.trim();
+  if (!motivo) throw new Error("Informe o motivo da separação.");
+
+  const vendedor = await prisma.vendedor.findUniqueOrThrow({
+    where: { id: entrada.vendedorId },
+    select: { id: true, nome: true, cpfCnpj: true, pessoaId: true },
+  });
+
+  const documentosDaPessoa = vendedor.pessoaId
+    ? await prisma.vendedor.count({ where: { pessoaId: vendedor.pessoaId } })
+    : 0;
+
+  if (documentosDaPessoa <= 1) {
+    throw new Error("Este cadastro já é o único documento da pessoa.");
+  }
+
+  const pessoaAnteriorId = vendedor.pessoaId;
+
+  const novaPessoaId = await prisma.$transaction(async (tx) => {
+    if (pessoaAnteriorId) {
+      await tx.pessoaVinculoHistorico.create({
+        data: {
+          pessoaId: pessoaAnteriorId,
+          vendedorId: vendedor.id,
+          vendedorNome: vendedor.nome,
+          vendedorDocumento: vendedor.cpfCnpj,
+          acao: "DESVINCULO",
+          motivo,
+          usuarioId: usuario.id,
+          usuarioNome: usuario.nome,
+        },
+      });
+    }
+
+    return criarPessoaParaVendedor(vendedor, tx, usuario);
+  });
+
+  await registrarAuditoria({
+    acao: "ATUALIZACAO",
+    entidade: "Pessoa",
+    entidadeId: novaPessoaId,
+    descricao: `Cadastro ${vendedor.cpfCnpj} (${vendedor.nome}) separado para uma pessoa própria`,
+    dadosAntes: { pessoaId: pessoaAnteriorId },
+    dadosDepois: { pessoaId: novaPessoaId, motivo },
+    usuario,
+  });
+
+  return { pessoaId: novaPessoaId };
+}
+
+// ---------------------------------------------------------------------------
+// Consulta
+// ---------------------------------------------------------------------------
+
+export interface DocumentoDaPessoa {
+  vendedorId: string;
+  nome: string;
+  cpfCnpj: string;
+  tipo: "CPF" | "CNPJ" | "OUTRO";
+  situacao: string;
+  cotas: number;
+  credito: number;
+  comissaoWr: number;
+}
+
+export interface FichaPessoa {
+  id: string;
+  nome: string;
+  documentos: DocumentoDaPessoa[];
+  totalCotas: number;
+  totalCredito: number;
+  totalComissaoWr: number;
+}
+
+/** Ficha consolidada da pessoa, com a quebra por documento. */
+export async function carregarFichaPessoa(pessoaId: string): Promise<FichaPessoa | null> {
+  const pessoa = await prisma.pessoa.findUnique({
+    where: { id: pessoaId },
+    select: {
+      id: true,
+      nome: true,
+      documentos: {
+        select: { id: true, nome: true, cpfCnpj: true, situacao: true },
+        orderBy: { criadoEm: "asc" },
+      },
+    },
+  });
+
+  if (!pessoa) return null;
+
+  const ids = pessoa.documentos.map((documento) => documento.id);
+
+  const [porCota, porComissao] = await Promise.all([
+    prisma.cota.groupBy({
+      by: ["vendedorEfetivoId"],
+      where: { vendedorEfetivoId: { in: ids } },
+      _count: { _all: true },
+      _sum: { valorCredito: true },
+    }),
+    prisma.comissaoWr.groupBy({
+      by: ["comissaoRegistroId"],
+      where: { comissaoRegistro: { vendedorId: { in: ids } } },
+      _sum: { valor: true },
+    }),
+  ]);
+
+  // A comissão WR pende do registro, então o vínculo com o documento vem daqui.
+  const registros = await prisma.comissaoRegistro.findMany({
+    where: { vendedorId: { in: ids } },
+    select: { id: true, vendedorId: true },
+  });
+  const documentoPorRegistro = new Map(
+    registros.map((registro) => [registro.id, registro.vendedorId]),
+  );
+
+  const comissaoPorDocumento = new Map<string, number>();
+  for (const item of porComissao) {
+    const documento = documentoPorRegistro.get(item.comissaoRegistroId);
+    if (!documento) continue;
+    comissaoPorDocumento.set(
+      documento,
+      (comissaoPorDocumento.get(documento) ?? 0) + Number(item._sum.valor ?? 0),
+    );
+  }
+
+  const cotaPorDocumento = new Map(
+    porCota.map((item) => [
+      item.vendedorEfetivoId ?? "",
+      { cotas: item._count._all, credito: Number(item._sum.valorCredito ?? 0) },
+    ]),
+  );
+
+  const documentos: DocumentoDaPessoa[] = pessoa.documentos.map((documento) => {
+    const cotas = cotaPorDocumento.get(documento.id);
+    return {
+      vendedorId: documento.id,
+      nome: documento.nome,
+      cpfCnpj: documento.cpfCnpj,
+      tipo: tipoDocumento(documento.cpfCnpj),
+      situacao: documento.situacao,
+      cotas: cotas?.cotas ?? 0,
+      credito: arredondar(cotas?.credito ?? 0),
+      comissaoWr: arredondar(comissaoPorDocumento.get(documento.id) ?? 0),
+    };
+  });
+
+  return {
+    id: pessoa.id,
+    nome: pessoa.nome,
+    documentos,
+    totalCotas: documentos.reduce((total, item) => total + item.cotas, 0),
+    totalCredito: arredondar(documentos.reduce((total, item) => total + item.credito, 0)),
+    totalComissaoWr: arredondar(
+      documentos.reduce((total, item) => total + item.comissaoWr, 0),
+    ),
+  };
+}
+
+/** Todos os documentos da pessoa — usado para filtrar listagens. */
+export async function documentosDaPessoa(
+  pessoaId: string,
+  db: Cliente = prisma,
+): Promise<string[]> {
+  const documentos = await db.vendedor.findMany({
+    where: { pessoaId },
+    select: { id: true },
+  });
+  return documentos.map((documento) => documento.id);
+}
+
+function arredondar(valor: number): number {
+  return Math.round(valor * 100) / 100;
+}

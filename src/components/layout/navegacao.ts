@@ -12,11 +12,13 @@ export interface ItemNavegacao {
 export const NAVEGACAO: readonly ItemNavegacao[] = [
   { href: "/", rotulo: "Dashboard", modulo: "dashboard", icone: "dashboard", grupo: "Operação" },
   { href: "/comissoes", rotulo: "Comissões WR", modulo: "comissoes", icone: "comissoes", grupo: "Operação" },
+  { href: "/comissoes-equipe", rotulo: "Comissões da equipe", modulo: "comissoesEquipe", icone: "comissoesEquipe", grupo: "Operação" },
   { href: "/clientes", rotulo: "Clientes (cotas)", modulo: "cotas", icone: "cotas", grupo: "Operação" },
   { href: "/importacoes", rotulo: "Importações", modulo: "importacoes", icone: "importacoes", grupo: "Operação" },
 
   { href: "/vendedores", rotulo: "Vendedores", modulo: "vendedores", icone: "vendedores", grupo: "Cadastros" },
   { href: "/pendencias", rotulo: "Pendências de cadastro", modulo: "vendedores", icone: "pendencias", grupo: "Cadastros" },
+  { href: "/vinculos", rotulo: "Vínculos de vendedores", modulo: "vendedores", icone: "vinculos", grupo: "Cadastros" },
   { href: "/equipes", rotulo: "Equipes", modulo: "equipes", icone: "equipes", grupo: "Cadastros" },
   { href: "/gerencias", rotulo: "Gerências", modulo: "gerencias", icone: "gerencias", grupo: "Cadastros" },
   { href: "/tabelas", rotulo: "Tabelas e Flex", modulo: "tabelas", icone: "tabelas", grupo: "Cadastros" },

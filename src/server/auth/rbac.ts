@@ -18,6 +18,7 @@ export const MODULOS = [
   "cotas",
   "transferencias",
   "comissoes",
+  "comissoesEquipe",
   "importacoes",
   "tabelas",
   "usuarios",
@@ -45,6 +46,7 @@ const MATRIZ: Record<PerfilUsuario, MatrizPerfil> = {
     gerencias: SOMENTE_LEITURA,
     cotas: SOMENTE_LEITURA,
     comissoes: SOMENTE_LEITURA,
+    comissoesEquipe: SOMENTE_LEITURA,
   },
 
   SUPERVISOR: {
@@ -53,18 +55,21 @@ const MATRIZ: Record<PerfilUsuario, MatrizPerfil> = {
     equipes: SOMENTE_LEITURA,
     cotas: SOMENTE_LEITURA,
     comissoes: SOMENTE_LEITURA,
+    comissoesEquipe: SOMENTE_LEITURA,
   },
 
   FINANCEIRO: {
     dashboard: SOMENTE_LEITURA,
     cotas: SOMENTE_LEITURA,
     comissoes: TODAS,
+    comissoesEquipe: TODAS,
     importacoes: TODAS,
     tabelas: TODAS,
   },
 
   RH: {
     dashboard: SOMENTE_LEITURA,
+    comissoesEquipe: SOMENTE_LEITURA,
     vendedores: TODAS,
     equipes: TODAS,
     gerencias: TODAS,

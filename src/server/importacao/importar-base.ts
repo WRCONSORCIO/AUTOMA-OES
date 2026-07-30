@@ -17,6 +17,7 @@ import {
   type ContextoUsuario,
 } from "@/server/services/vendedores";
 import { registrarAuditoria } from "@/server/services/auditoria";
+import { apurarComissoesEquipe } from "@/server/services/comissao-equipe";
 import { lerCsvBase, type LinhaBase } from "./csv-base";
 
 const TAMANHO_LOTE = 200;
@@ -139,6 +140,9 @@ export async function importarBaseCsv(
 
     const status = contadores.erros > 0 ? "CONCLUIDA_COM_ERROS" : "CONCLUIDA";
 
+    // Vendas novas ou com crédito/flex alterados mudam a comissão da equipe.
+    const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+
     await prisma.importacao.update({
       where: { id: importacao.id },
       data: {
@@ -156,6 +160,11 @@ export async function importarBaseCsv(
           estornosGerados: contadores.estornosGerados,
           vendedoresCriados: contadores.vendedoresCriados,
           colunasDesconhecidas,
+          comissaoEquipe: {
+            linhas: equipe.linhasGravadas,
+            previsto: equipe.valorPrevisto,
+            liberado: equipe.valorLiberado,
+          },
         },
       },
     });

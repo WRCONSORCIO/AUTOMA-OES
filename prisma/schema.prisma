@@ -9,7 +9,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Conexão da aplicação. Em ambiente serverless, use a URL com pooler.
   url       = env("DATABASE_URL")
   // Conexão direta, sem pooler, usada pelas migrations.
@@ -112,6 +112,23 @@ enum AcaoAuditoria {
   RECALCULO_COMISSAO
 }
 
+/// Quem recebe a comissão interna da WR sobre uma venda.
+enum PapelComissao {
+  VENDEDOR
+  SUPERVISOR
+  GERENCIA
+}
+
+/// Condição que liga ou desliga a linha da regra.
+enum CondicaoComissao {
+  /// Vale sempre para a categoria.
+  SEMPRE
+  /// Só quando a supervisão da venda é diferente da gerência.
+  SUPERVISAO_DIFERENTE_GERENCIA
+  /// Só quando a equipe da venda está marcada como habilitada.
+  EQUIPE_HABILITADA
+}
+
 enum TipoBackup {
   AUTOMATICO
   MANUAL
@@ -153,6 +170,7 @@ model Usuario {
   overridesCriados      CotaVendedorOverride[]
   overridesHistorico    CotaVendedorOverrideHistorico[]
   alocacoesRegistradas  VendedorAlocacaoHistorico[]
+  vinculosRegistrados   PessoaVinculoHistorico[]
 
   @@index([perfil, ativo])
   @@index([gerenciaId])
@@ -171,6 +189,7 @@ model Gerencia {
   usuarios          Usuario[]
   cotas             Cota[]
   comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
   alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@index([status])
@@ -184,12 +203,16 @@ model Equipe {
   criadoEm     DateTime       @default(now())
   atualizadoEm DateTime       @updatedAt
 
+  /// Marca a equipe para as regras cuja condição é EQUIPE_HABILITADA.
+  habilitadaComissao Boolean @default(false)
+
   gerencia Gerencia @relation(fields: [gerenciaId], references: [id])
 
   vendedores        Vendedor[]
   usuarios          Usuario[]
   cotas             Cota[]
   comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
   alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@unique([gerenciaId, nome])
@@ -200,27 +223,78 @@ model Equipe {
 // Vendedores
 // ---------------------------------------------------------------------------
 
+/// A pessoa física por trás dos cadastros de vendedor.
+///
+/// O vendedor entra vendendo no CPF e, ao mudar de categoria, passa a operar
+/// por um ou mais CNPJs. Cada documento vira um cadastro de Vendedor próprio,
+/// porque é assim que a administradora paga — mas todos pertencem à mesma
+/// pessoa, e é aqui que ficam a categoria, a recuperação e a consolidação dos
+/// números.
+model Pessoa {
+  id           String   @id @default(cuid())
+  nome         String
+  observacoes  String?
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  documentos          Vendedor[]
+  historicoCategorias VendedorCategoriaHistorico[]
+  recuperacoes        VendedorRecuperacao[]
+  vinculos            PessoaVinculoHistorico[]
+  comissoesEquipe     ComissaoEquipe[]
+
+  @@index([nome])
+}
+
+/// Append-only. Registra cada vínculo e desvínculo de documento à pessoa.
+model PessoaVinculoHistorico {
+  id                String   @id @default(cuid())
+  pessoaId          String
+  vendedorId        String
+  vendedorNome      String
+  vendedorDocumento String
+  acao              String
+  motivo            String?
+  automatico        Boolean  @default(false)
+  usuarioId         String?
+  usuarioNome       String?
+  criadoEm          DateTime @default(now())
+
+  pessoa   Pessoa   @relation(fields: [pessoaId], references: [id])
+  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([pessoaId, criadoEm])
+  @@index([vendedorId])
+}
+
 model Vendedor {
-  id             String            @id @default(cuid())
-  nome           String
+  id               String            @id @default(cuid())
+  nome             String
   // Normalizado (somente dígitos) para casar com a base da administradora.
-  cpfCnpj        String            @unique
+  cpfCnpj          String            @unique
   cpfCnpjFormatado String?
-  equipeId       String?
-  gerenciaId     String?
-  categoriaAtual CategoriaVendedor @default(INICIANTE)
-  dataEntradaWr  DateTime?         @db.Date
-  situacao       SituacaoVendedor  @default(ATIVO)
-  observacoes    String?
-  criadoEm       DateTime          @default(now())
-  atualizadoEm   DateTime          @updatedAt
+  equipeId         String?
+  gerenciaId       String?
+  categoriaAtual   CategoriaVendedor @default(INICIANTE)
+  dataEntradaWr    DateTime?         @db.Date
+  situacao         SituacaoVendedor  @default(ATIVO)
+  observacoes      String?
+  criadoEm         DateTime          @default(now())
+  atualizadoEm     DateTime          @updatedAt
+
+  /// Todo cadastro pertence a uma pessoa. Documentos da mesma pessoa
+  /// compartilham categoria, recuperação e os totais consolidados.
+  pessoaId String?
 
   equipe   Equipe?   @relation(fields: [equipeId], references: [id])
   gerencia Gerencia? @relation(fields: [gerenciaId], references: [id])
+  pessoa   Pessoa?   @relation(fields: [pessoaId], references: [id])
 
   historicoCategorias VendedorCategoriaHistorico[]
   historicoAlocacoes  VendedorAlocacaoHistorico[]
   recuperacoes        VendedorRecuperacao[]
+  vinculos            PessoaVinculoHistorico[]
 
   cotasAdministradora Cota[]                          @relation("VendedorAdministradora")
   cotasEfetivas       Cota[]                          @relation("VendedorEfetivo")
@@ -234,13 +308,17 @@ model Vendedor {
   @@index([equipeId])
   @@index([gerenciaId])
   @@index([categoriaAtual])
+  @@index([pessoaId])
 }
 
 /// Append-only. A categoria vigente numa data é resolvida por esta tabela,
 /// nunca pela categoria atual do vendedor.
 model VendedorCategoriaHistorico {
   id         String            @id @default(cuid())
-  vendedorId String
+  /// Dono do período. A categoria vale para todos os documentos da pessoa.
+  pessoaId   String?
+  /// Documento a partir do qual o registro foi feito, mantido por rastreio.
+  vendedorId String?
   categoria  CategoriaVendedor
   vigenteDe  DateTime          @db.Date
   vigenteAte DateTime?         @db.Date
@@ -248,9 +326,11 @@ model VendedorCategoriaHistorico {
   usuarioId  String?
   criadoEm   DateTime          @default(now())
 
-  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
-  usuario  Usuario? @relation(fields: [usuarioId], references: [id])
+  pessoa   Pessoa?   @relation(fields: [pessoaId], references: [id])
+  vendedor Vendedor? @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario?  @relation(fields: [usuarioId], references: [id])
 
+  @@index([pessoaId, vigenteDe])
   @@index([vendedorId, vigenteDe])
   @@index([vigenteDe, vigenteAte])
 }
@@ -279,7 +359,10 @@ model VendedorAlocacaoHistorico {
 /// permanentemente na cota — encerrar a recuperação não desmarca nada.
 model VendedorRecuperacao {
   id          String    @id @default(cuid())
-  vendedorId  String
+  /// Dono do período. Vale para todos os documentos da pessoa.
+  pessoaId    String?
+  /// Documento a partir do qual o registro foi feito, mantido por rastreio.
+  vendedorId  String?
   dataInicio  DateTime  @db.Date
   dataFim     DateTime  @db.Date
   motivo      String?
@@ -287,10 +370,12 @@ model VendedorRecuperacao {
   usuarioId   String?
   criadoEm    DateTime  @default(now())
 
-  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
-  usuario  Usuario? @relation(fields: [usuarioId], references: [id])
+  pessoa   Pessoa?   @relation(fields: [pessoaId], references: [id])
+  vendedor Vendedor? @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario?  @relation(fields: [usuarioId], references: [id])
   cotas    Cota[]
 
+  @@index([pessoaId, dataInicio, dataFim])
   @@index([vendedorId, dataInicio, dataFim])
   @@index([dataInicio, dataFim])
 }
@@ -337,16 +422,16 @@ model Cota {
   situacao         SituacaoCota @default(ATIVO)
   situacaoOriginal String?
 
-  diaVencimento  Int?
-  valorCredito   Decimal? @db.Decimal(18, 2)
-  valorParcela   Decimal? @db.Decimal(18, 2)
-  meioPagamento  String?
-  segmento       String?
-  produto        String?
-  prazo          Int?
-  parcelasPagas  Int      @default(0)
-  parcelasAntecipadas Int @default(0)
-  parcelasEmitidas    Int @default(0)
+  diaVencimento       Int?
+  valorCredito        Decimal?  @db.Decimal(18, 2)
+  valorParcela        Decimal?  @db.Decimal(18, 2)
+  meioPagamento       String?
+  segmento            String?
+  produto             String?
+  prazo               Int?
+  parcelasPagas       Int       @default(0)
+  parcelasAntecipadas Int       @default(0)
+  parcelasEmitidas    Int       @default(0)
   dataUltimoPagamento DateTime? @db.Date
 
   contemplado             Boolean   @default(false)
@@ -364,32 +449,32 @@ model Cota {
   temFlex  Boolean  @default(false)
   taxaFlex Decimal? @db.Decimal(9, 4)
 
-  cpfCnpjParceiro           String?
-  cpfCnpjVendedorAdm        String?
-  nomeVendedorAdm           String?
-  cpfCnpjParceiroComercial  String?
-  nomeParceiroComercial     String?
-  origemVenda               String?
+  cpfCnpjParceiro          String?
+  cpfCnpjVendedorAdm       String?
+  nomeVendedorAdm          String?
+  cpfCnpjParceiroComercial String?
+  nomeParceiroComercial    String?
+  origemVenda              String?
 
   dataCancelamento DateTime? @db.Date
 
   // Vendedor informado pela administradora.
-  vendedorAdmId String?
+  vendedorAdmId     String?
   // Vendedor efetivo = override WR quando existir, senão o da administradora.
   vendedorEfetivoId String?
   origemVendedor    OrigemVendedor @default(ADMINISTRADORA)
 
   // --- Snapshots imutáveis, gravados uma única vez na criação da venda ---
   /// Categoria vigente do vendedor NA DATA DA VENDA. Nunca é recalculada.
-  categoriaVenda        CategoriaVendedor?
+  categoriaVenda         CategoriaVendedor?
   categoriaVendaFixadaEm DateTime?
   /// Marcação permanente de venda realizada durante recuperação.
-  emRecuperacao         Boolean            @default(false)
-  recuperacaoId         String?
-  recuperacaoFixadaEm   DateTime?
+  emRecuperacao          Boolean            @default(false)
+  recuperacaoId          String?
+  recuperacaoFixadaEm    DateTime?
   /// Equipe/gerência no momento da venda, para relatórios históricos estáveis.
-  equipeId              String?
-  gerenciaId            String?
+  equipeId               String?
+  gerenciaId             String?
 
   geraEstorno Boolean @default(false)
 
@@ -410,6 +495,7 @@ model Cota {
   override          CotaVendedorOverride?
   overrideHistorico CotaVendedorOverrideHistorico[]
   comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
   estorno           Estorno?
 
   @@unique([administradoraId, contrato, grupo, cota, cpfCnpjCliente], name: "identidadeCota")
@@ -454,8 +540,8 @@ model CotaVendedorOverride {
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
-  cota     Cota     @relation(fields: [cotaId], references: [id])
-  vendedor Vendedor @relation(fields: [vendedorId], references: [id])
+  cota      Cota     @relation(fields: [cotaId], references: [id])
+  vendedor  Vendedor @relation(fields: [vendedorId], references: [id])
   criadoPor Usuario? @relation(fields: [criadoPorId], references: [id])
 
   @@index([vendedorId])
@@ -485,13 +571,13 @@ model CotaVendedorOverrideHistorico {
 /// cancelada antes da sexta parcela — independente de quando o cancelamento
 /// aconteça.
 model Estorno {
-  id                        String   @id @default(cuid())
-  cotaId                    String   @unique
-  motivo                    String
+  id                          String   @id @default(cuid())
+  cotaId                      String   @unique
+  motivo                      String
   parcelasPagasNoCancelamento Int
-  dataCancelamento          DateTime @db.Date
-  valorReferencia           Decimal? @db.Decimal(18, 2)
-  criadoEm                  DateTime @default(now())
+  dataCancelamento            DateTime @db.Date
+  valorReferencia             Decimal? @db.Decimal(18, 2)
+  criadoEm                    DateTime @default(now())
 
   cota Cota @relation(fields: [cotaId], references: [id])
 
@@ -515,24 +601,24 @@ model ComissaoRegistro {
   contatoCliente String?
   objeto         String?
 
-  valorCredito        Decimal  @db.Decimal(18, 2)
-  percentualFlex      Decimal? @db.Decimal(9, 4)
-  valorComissao       Decimal  @db.Decimal(18, 2)
-  valorDsr            Decimal? @db.Decimal(18, 2)
-  valorSeguro         Decimal? @db.Decimal(18, 2)
-  percentualComissao  Decimal? @db.Decimal(9, 4)
+  valorCredito       Decimal  @db.Decimal(18, 2)
+  percentualFlex     Decimal? @db.Decimal(9, 4)
+  valorComissao      Decimal  @db.Decimal(18, 2)
+  valorDsr           Decimal? @db.Decimal(18, 2)
+  valorSeguro        Decimal? @db.Decimal(18, 2)
+  percentualComissao Decimal? @db.Decimal(9, 4)
 
-  tipo TipoLancamentoComissao
+  tipo         TipoLancamentoComissao
   /// Texto exato da coluna ORIGEM no relatório, preservado sempre.
   tipoOriginal String
   /// INCLUSAO DE PLANO é sempre parcela 1.
-  parcela Int
+  parcela      Int
 
-  dataPagamento DateTime? @db.Date
-  dataContabil  DateTime? @db.Date
-  dataCheque    DateTime? @db.Date
-  dataVenda     DateTime? @db.Date
-  dataReferencia DateTime @db.Date
+  dataPagamento  DateTime? @db.Date
+  dataContabil   DateTime? @db.Date
+  dataCheque     DateTime? @db.Date
+  dataVenda      DateTime? @db.Date
+  dataReferencia DateTime  @db.Date
 
   classificacaoObjeto String?
   assinatura          String?
@@ -579,18 +665,18 @@ model ComissaoRegistro {
 
 /// Comissão calculada pela WR sobre o registro do relatório.
 model ComissaoWr {
-  id                 String  @id @default(cuid())
-  comissaoRegistroId String  @unique
+  id                 String             @id @default(cuid())
+  comissaoRegistroId String             @unique
   categoriaVenda     CategoriaVendedor?
   parcela            Int
-  baseCalculo        Decimal @db.Decimal(18, 2)
-  percentual         Decimal @db.Decimal(9, 4)
-  valor              Decimal @db.Decimal(18, 2)
+  baseCalculo        Decimal            @db.Decimal(18, 2)
+  percentual         Decimal            @db.Decimal(9, 4)
+  valor              Decimal            @db.Decimal(18, 2)
   regra              String
   observacao         String?
   tabelaComissaoId   String?
   modalidadeFlexId   String?
-  calculadoEm        DateTime @default(now())
+  calculadoEm        DateTime           @default(now())
 
   comissaoRegistro ComissaoRegistro @relation(fields: [comissaoRegistroId], references: [id], onDelete: Cascade)
   tabelaComissao   TabelaComissao?  @relation(fields: [tabelaComissaoId], references: [id])
@@ -612,8 +698,8 @@ model TabelaComissao {
   criadoEm     DateTime          @default(now())
   atualizadoEm DateTime          @updatedAt
 
-  faixas     FaixaComissao[]
-  comissoes  ComissaoWr[]
+  faixas    FaixaComissao[]
+  comissoes ComissaoWr[]
 
   @@index([categoria, vigenteDe])
 }
@@ -628,6 +714,83 @@ model FaixaComissao {
   tabela TabelaComissao @relation(fields: [tabelaId], references: [id], onDelete: Cascade)
 
   @@unique([tabelaId, parcela])
+}
+
+/// Tabela de comissão que a WR paga à própria equipe, por categoria da venda.
+/// Versionada por vigência: alterar percentuais nunca reescreve o que já foi
+/// apurado com os valores da época.
+model TabelaComissaoEquipe {
+  id                    String            @id @default(cuid())
+  nome                  String
+  categoria             CategoriaVendedor
+  vigenteDe             DateTime          @db.Date
+  vigenteAte            DateTime?         @db.Date
+  ativo                 Boolean           @default(true)
+  /// Em quantas parcelas recebidas a comissão prevista é liberada.
+  /// 1 libera tudo no primeiro recebimento da venda.
+  parcelasParaLiberacao Int               @default(1)
+  criadoEm              DateTime          @default(now())
+  atualizadoEm          DateTime          @updatedAt
+
+  regras    RegraComissaoEquipe[]
+  comissoes ComissaoEquipe[]
+
+  @@index([categoria, vigenteDe])
+}
+
+model RegraComissaoEquipe {
+  id         String           @id @default(cuid())
+  tabelaId   String
+  papel      PapelComissao
+  percentual Decimal          @db.Decimal(9, 4)
+  condicao   CondicaoComissao @default(SEMPRE)
+  criadoEm   DateTime         @default(now())
+
+  tabela    TabelaComissaoEquipe @relation(fields: [tabelaId], references: [id], onDelete: Cascade)
+  comissoes ComissaoEquipe[]
+
+  @@unique([tabelaId, papel])
+}
+
+/// Comissão apurada por venda e por papel.
+///
+/// `valorPrevisto` nasce com a venda; `valorLiberado` acompanha os
+/// recebimentos que a administradora já pagou para aquela cota.
+model ComissaoEquipe {
+  id             String            @id @default(cuid())
+  cotaId         String
+  papel          PapelComissao
+  categoriaVenda CategoriaVendedor
+
+  /// Quem recebe: a pessoa (vendedor) ou a unidade (supervisão/gerência).
+  pessoaId   String?
+  equipeId   String?
+  gerenciaId String?
+
+  baseCalculo       Decimal @db.Decimal(18, 2)
+  percentual        Decimal @db.Decimal(9, 4)
+  valorPrevisto     Decimal @db.Decimal(18, 2)
+  valorLiberado     Decimal @default(0) @db.Decimal(18, 2)
+  parcelasRecebidas Int     @default(0)
+
+  tabelaId String?
+  regraId  String?
+  regra    String
+
+  calculadoEm DateTime @default(now())
+
+  cota     Cota                  @relation(fields: [cotaId], references: [id], onDelete: Cascade)
+  pessoa   Pessoa?               @relation(fields: [pessoaId], references: [id])
+  equipe   Equipe?               @relation(fields: [equipeId], references: [id])
+  gerencia Gerencia?             @relation(fields: [gerenciaId], references: [id])
+  tabela   TabelaComissaoEquipe? @relation(fields: [tabelaId], references: [id])
+  regraRef RegraComissaoEquipe?  @relation(fields: [regraId], references: [id])
+
+  @@unique([cotaId, papel])
+  @@index([pessoaId])
+  @@index([equipeId])
+  @@index([gerenciaId])
+  @@index([categoriaVenda])
 }
 
 model ModalidadeFlex {
@@ -658,23 +821,23 @@ model Importacao {
   iniciadoEm       DateTime         @default(now())
   finalizadoEm     DateTime?
 
-  totalLinhas      Int @default(0)
-  qtdCriados       Int @default(0)
-  qtdAtualizados   Int @default(0)
-  qtdInalterados   Int @default(0)
-  qtdDuplicados    Int @default(0)
-  qtdCancelados    Int @default(0)
-  qtdContemplados  Int @default(0)
-  qtdErros         Int @default(0)
+  totalLinhas     Int @default(0)
+  qtdCriados      Int @default(0)
+  qtdAtualizados  Int @default(0)
+  qtdInalterados  Int @default(0)
+  qtdDuplicados   Int @default(0)
+  qtdCancelados   Int @default(0)
+  qtdContemplados Int @default(0)
+  qtdErros        Int @default(0)
 
   resumo Json?
 
   administradora Administradora? @relation(fields: [administradoraId], references: [id])
   usuario        Usuario?        @relation(fields: [usuarioId], references: [id])
 
-  erros      ImportacaoErro[]
-  versoes    CotaVersao[]
-  comissoes  ComissaoRegistro[]
+  erros     ImportacaoErro[]
+  versoes   CotaVersao[]
+  comissoes ComissaoRegistro[]
 
   @@index([tipo, iniciadoEm])
   @@index([status])
