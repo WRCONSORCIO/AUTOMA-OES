@@ -23,7 +23,9 @@ import {
   Tr,
 } from "@/components/ui";
 import { Indicador } from "@/components/indicador";
+import { carregarFichaPessoa } from "@/server/services/pessoas";
 import { PainelVendedor } from "./painel";
+import { BotaoSeparar } from "../../vinculos/formularios";
 
 export const metadata: Metadata = { title: "Vendedor" };
 
@@ -37,12 +39,19 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
     include: {
       equipe: { select: { id: true, nome: true } },
       gerencia: { select: { id: true, nome: true } },
-      historicoCategorias: { orderBy: { vigenteDe: "desc" } },
+      pessoa: {
+        select: {
+          id: true,
+          nome: true,
+          historicoCategorias: { orderBy: { vigenteDe: "desc" } },
+          recuperacoes: { orderBy: { dataInicio: "desc" } },
+          vinculos: { orderBy: { criadoEm: "desc" }, take: 20 },
+        },
+      },
       historicoAlocacoes: {
         orderBy: { vigenteDe: "desc" },
         include: { equipe: { select: { nome: true } }, gerencia: { select: { nome: true } } },
       },
-      recuperacoes: { orderBy: { dataInicio: "desc" } },
     },
   });
 
@@ -50,17 +59,22 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
   if (escopo.gerenciaId && vendedor.gerenciaId !== escopo.gerenciaId) notFound();
   if (escopo.equipeId && vendedor.equipeId !== escopo.equipeId) notFound();
 
+  const ficha = vendedor.pessoa ? await carregarFichaPessoa(vendedor.pessoa.id) : null;
+  const documentosDaPessoa = ficha?.documentos.map((documento) => documento.vendedorId) ?? [id];
+
   const [resumoCotas, comissaoWr, cotasRecuperacao, equipes, gerencias] = await Promise.all([
     prisma.cota.aggregate({
-      where: { vendedorEfetivoId: id },
+      where: { vendedorEfetivoId: { in: documentosDaPessoa } },
       _count: { _all: true },
       _sum: { valorCredito: true },
     }),
     prisma.comissaoWr.aggregate({
-      where: { comissaoRegistro: { vendedorId: id } },
+      where: { comissaoRegistro: { vendedorId: { in: documentosDaPessoa } } },
       _sum: { valor: true },
     }),
-    prisma.cota.count({ where: { vendedorEfetivoId: id, emRecuperacao: true } }),
+    prisma.cota.count({
+      where: { vendedorEfetivoId: { in: documentosDaPessoa }, emRecuperacao: true },
+    }),
     prisma.equipe.findMany({
       where: { status: "ATIVO" },
       select: { id: true, nome: true, gerencia: { select: { id: true, nome: true } } },
@@ -74,7 +88,9 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
   ]);
 
   const podeEditar = podeAcessar(sessao.perfil, "vendedores", "editar");
-  const semHistoricoCategoria = vendedor.historicoCategorias.length === 0;
+  const historicoCategorias = vendedor.pessoa?.historicoCategorias ?? [];
+  const recuperacoes = vendedor.pessoa?.recuperacoes ?? [];
+  const semHistoricoCategoria = historicoCategorias.length === 0;
 
   return (
     <>
@@ -110,7 +126,15 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
       ) : null}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Indicador rotulo="Cotas atribuídas" valor={formatarNumero(resumoCotas._count._all)} />
+        <Indicador
+          rotulo="Cotas atribuídas"
+          valor={formatarNumero(resumoCotas._count._all)}
+          detalhe={
+            documentosDaPessoa.length > 1
+              ? `Somando ${documentosDaPessoa.length} documentos da pessoa`
+              : undefined
+          }
+        />
         <Indicador
           rotulo="Crédito vendido"
           valor={formatarMoeda(resumoCotas._sum.valorCredito ?? 0)}
@@ -142,6 +166,79 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
         />
       ) : null}
 
+      {ficha && ficha.documentos.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Documentos desta pessoa</CardTitle>
+            <p className="text-sm text-[var(--color-texto-2)]">
+              O vendedor começa no CPF e passa a operar por CNPJ ao mudar de categoria. Categoria
+              e recuperação valem para todos os documentos abaixo.
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Tabela>
+              <Cabecalho>
+                <tr>
+                  <Th>Documento</Th>
+                  <Th>Nome no cadastro</Th>
+                  <Th>Situação</Th>
+                  <Th className="text-right">Vendas</Th>
+                  <Th className="text-right">Crédito</Th>
+                  <Th className="text-right">Comissão WR</Th>
+                  {podeEditar && ficha.documentos.length > 1 ? <Th>Ações</Th> : null}
+                </tr>
+              </Cabecalho>
+              <tbody>
+                {ficha.documentos.map((documento) => (
+                  <Tr key={documento.vendedorId}>
+                    <Td className="whitespace-nowrap">
+                      <Badge tom={documento.tipo === "CPF" ? "marca" : "neutro"}>
+                        {documento.tipo}
+                      </Badge>
+                      <span className="numerico ml-2">
+                        {formatarDocumento(documento.cpfCnpj)}
+                      </span>
+                    </Td>
+                    <Td>
+                      {documento.vendedorId === vendedor.id ? (
+                        <strong>{documento.nome}</strong>
+                      ) : (
+                        <Link
+                          href={`/vendedores/${documento.vendedorId}`}
+                          className="text-[var(--color-marca-forte)] hover:underline"
+                        >
+                          {documento.nome}
+                        </Link>
+                      )}
+                    </Td>
+                    <Td>{documento.situacao}</Td>
+                    <Td className="numerico text-right">{formatarNumero(documento.cotas)}</Td>
+                    <Td className="numerico text-right">{formatarMoeda(documento.credito)}</Td>
+                    <Td className="numerico text-right">
+                      {formatarMoeda(documento.comissaoWr)}
+                    </Td>
+                    {podeEditar && ficha.documentos.length > 1 ? (
+                      <Td>
+                        <BotaoSeparar vendedorId={documento.vendedorId} />
+                      </Td>
+                    ) : null}
+                  </Tr>
+                ))}
+                <Tr className="font-medium">
+                  <Td colSpan={3}>Total da pessoa</Td>
+                  <Td className="numerico text-right">{formatarNumero(ficha.totalCotas)}</Td>
+                  <Td className="numerico text-right">{formatarMoeda(ficha.totalCredito)}</Td>
+                  <Td className="numerico text-right">
+                    {formatarMoeda(ficha.totalComissaoWr)}
+                  </Td>
+                  {podeEditar && ficha.documentos.length > 1 ? <Td /> : null}
+                </Tr>
+              </tbody>
+            </Tabela>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Histórico de categoria</CardTitle>
@@ -162,10 +259,10 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
               </tr>
             </Cabecalho>
             <tbody>
-              {vendedor.historicoCategorias.length === 0 ? (
+              {historicoCategorias.length === 0 ? (
                 <TabelaVazia colunas={5} mensagem="Nenhuma categoria registrada." />
               ) : (
-                vendedor.historicoCategorias.map((periodo) => (
+                historicoCategorias.map((periodo) => (
                   <Tr key={periodo.id}>
                     <Td>
                       <Badge tom="marca">{periodo.categoria}</Badge>
@@ -203,10 +300,10 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
               </tr>
             </Cabecalho>
             <tbody>
-              {vendedor.recuperacoes.length === 0 ? (
+              {recuperacoes.length === 0 ? (
                 <TabelaVazia colunas={4} mensagem="Nenhum período de recuperação registrado." />
               ) : (
-                vendedor.recuperacoes.map((periodo) => (
+                recuperacoes.map((periodo) => (
                   <Tr key={periodo.id}>
                     <Td className="whitespace-nowrap">{formatarData(periodo.dataInicio)}</Td>
                     <Td className="whitespace-nowrap">{formatarData(periodo.dataFim)}</Td>

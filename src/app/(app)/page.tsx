@@ -57,7 +57,7 @@ export default async function PaginaDashboard({
   ] = await Promise.all([
     carregarIndicadores(filtro, escopo),
     carregarSerieMensal({ ...filtro, de: undefined, ate: undefined }, escopo),
-    carregarRanking("vendedorId", filtro, escopo, 10),
+    carregarRanking("pessoaId", filtro, escopo, 10),
     carregarRanking("equipeId", filtro, escopo, 10),
     carregarRanking("gerenciaId", filtro, escopo, 10),
     carregarRanking("administradoraId", filtro, escopo, 10),

@@ -79,7 +79,8 @@ export default async function PaginaVendedores({
         dataEntradaWr: true,
         equipe: { select: { nome: true } },
         gerencia: { select: { nome: true } },
-        _count: { select: { cotasEfetivas: true, recuperacoes: true } },
+        pessoa: { select: { _count: { select: { documentos: true } } } },
+        _count: { select: { cotasEfetivas: true } },
       },
       orderBy: { nome: "asc" },
       skip: (pagina - 1) * POR_PAGINA,
@@ -201,8 +202,10 @@ export default async function PaginaVendedores({
                         <Badge tom={vendedor.situacao === "ATIVO" ? "bom" : "neutro"}>
                           {vendedor.situacao}
                         </Badge>
-                        {vendedor._count.recuperacoes > 0 ? (
-                          <Badge tom="atencao">Recuperação</Badge>
+                        {(vendedor.pessoa?._count.documentos ?? 1) > 1 ? (
+                          <Badge tom="marca">
+                            {vendedor.pessoa?._count.documentos} documentos
+                          </Badge>
                         ) : null}
                       </div>
                     </Td>

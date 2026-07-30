@@ -15,6 +15,7 @@ import {
   type PeriodoRecuperacao,
 } from "@/server/domain/regras";
 import { registrarAuditoria } from "./auditoria";
+import { criarPessoaParaVendedor, vincularAPessoaExistente } from "./pessoas";
 
 type Cliente = Prisma.TransactionClient | typeof prisma;
 
@@ -28,11 +29,11 @@ export interface ContextoUsuario {
 // ---------------------------------------------------------------------------
 
 export async function carregarHistoricoCategorias(
-  vendedorId: string,
+  pessoaId: string,
   db: Cliente = prisma,
 ): Promise<PeriodoCategoria[]> {
   const registros = await db.vendedorCategoriaHistorico.findMany({
-    where: { vendedorId },
+    where: { pessoaId },
     select: { categoria: true, vigenteDe: true, vigenteAte: true },
     orderBy: { vigenteDe: "asc" },
   });
@@ -40,11 +41,11 @@ export async function carregarHistoricoCategorias(
 }
 
 export async function carregarRecuperacoes(
-  vendedorId: string,
+  pessoaId: string,
   db: Cliente = prisma,
 ): Promise<PeriodoRecuperacao[]> {
   const registros = await db.vendedorRecuperacao.findMany({
-    where: { vendedorId },
+    where: { pessoaId },
     select: { id: true, dataInicio: true, dataFim: true },
     orderBy: { dataInicio: "asc" },
   });
@@ -52,25 +53,38 @@ export async function carregarRecuperacoes(
 }
 
 /**
- * Categoria vigente do vendedor na data da venda. Nunca use a categoria atual
- * do vendedor para calcular uma venda passada.
+ * Categoria vigente na data da venda. A categoria é da pessoa, então vale para
+ * todos os documentos dela. Nunca use a categoria atual para calcular uma
+ * venda passada.
  */
 export async function categoriaNaData(
-  vendedorId: string,
+  pessoaId: string,
   dataVenda: Date,
   db: Cliente = prisma,
 ): Promise<CategoriaVendedor | null> {
-  const historico = await carregarHistoricoCategorias(vendedorId, db);
+  const historico = await carregarHistoricoCategorias(pessoaId, db);
   return resolverCategoriaNaData(historico, dataVenda);
 }
 
 export async function recuperacaoNaData(
-  vendedorId: string,
+  pessoaId: string,
   dataVenda: Date,
   db: Cliente = prisma,
 ): Promise<PeriodoRecuperacao | null> {
-  const periodos = await carregarRecuperacoes(vendedorId, db);
+  const periodos = await carregarRecuperacoes(pessoaId, db);
   return encontrarRecuperacaoNaData(periodos, dataVenda);
+}
+
+/** Pessoa dona do cadastro. */
+export async function pessoaDoVendedor(
+  vendedorId: string,
+  db: Cliente = prisma,
+): Promise<string | null> {
+  const vendedor = await db.vendedor.findUnique({
+    where: { id: vendedorId },
+    select: { pessoaId: true },
+  });
+  return vendedor?.pessoaId ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,17 +99,35 @@ export class CacheVendedores {
   private categorias = new Map<string, PeriodoCategoria[]>();
   private recuperacoes = new Map<string, PeriodoRecuperacao[]>();
   private porDocumento = new Map<string, string | null>();
+  private pessoaPorVendedor = new Map<string, string | null>();
 
   constructor(private readonly db: Cliente = prisma) {}
+
+  /** Categoria e recuperação são da pessoa: o cadastro só aponta o caminho. */
+  async pessoaDe(vendedorId: string): Promise<string | null> {
+    if (this.pessoaPorVendedor.has(vendedorId)) {
+      return this.pessoaPorVendedor.get(vendedorId) ?? null;
+    }
+    const vendedor = await this.db.vendedor.findUnique({
+      where: { id: vendedorId },
+      select: { pessoaId: true },
+    });
+    const pessoaId = vendedor?.pessoaId ?? null;
+    this.pessoaPorVendedor.set(vendedorId, pessoaId);
+    return pessoaId;
+  }
 
   async categoriaNaData(
     vendedorId: string,
     dataVenda: Date,
   ): Promise<CategoriaVendedor | null> {
-    let historico = this.categorias.get(vendedorId);
+    const pessoaId = await this.pessoaDe(vendedorId);
+    if (!pessoaId) return null;
+
+    let historico = this.categorias.get(pessoaId);
     if (!historico) {
-      historico = await carregarHistoricoCategorias(vendedorId, this.db);
-      this.categorias.set(vendedorId, historico);
+      historico = await carregarHistoricoCategorias(pessoaId, this.db);
+      this.categorias.set(pessoaId, historico);
     }
     return resolverCategoriaNaData(historico, dataVenda);
   }
@@ -104,10 +136,13 @@ export class CacheVendedores {
     vendedorId: string,
     dataVenda: Date,
   ): Promise<PeriodoRecuperacao | null> {
-    let periodos = this.recuperacoes.get(vendedorId);
+    const pessoaId = await this.pessoaDe(vendedorId);
+    if (!pessoaId) return null;
+
+    let periodos = this.recuperacoes.get(pessoaId);
     if (!periodos) {
-      periodos = await carregarRecuperacoes(vendedorId, this.db);
-      this.recuperacoes.set(vendedorId, periodos);
+      periodos = await carregarRecuperacoes(pessoaId, this.db);
+      this.recuperacoes.set(pessoaId, periodos);
     }
     return encontrarRecuperacaoNaData(periodos, dataVenda);
   }
@@ -119,19 +154,21 @@ export class CacheVendedores {
 
     const vendedor = await this.db.vendedor.findUnique({
       where: { cpfCnpj: chave },
-      select: { id: true },
+      select: { id: true, pessoaId: true },
     });
     this.porDocumento.set(chave, vendedor?.id ?? null);
+    if (vendedor) this.pessoaPorVendedor.set(vendedor.id, vendedor.pessoaId);
     return vendedor?.id ?? null;
   }
 
-  registrar(documento: string, vendedorId: string): void {
+  registrar(documento: string, vendedorId: string, pessoaId?: string | null): void {
     this.porDocumento.set(normalizarDocumento(documento), vendedorId);
+    if (pessoaId !== undefined) this.pessoaPorVendedor.set(vendedorId, pessoaId);
   }
 
-  invalidar(vendedorId: string): void {
-    this.categorias.delete(vendedorId);
-    this.recuperacoes.delete(vendedorId);
+  invalidar(pessoaId: string): void {
+    this.categorias.delete(pessoaId);
+    this.recuperacoes.delete(pessoaId);
   }
 }
 
@@ -148,6 +185,9 @@ export interface DadosVendedor {
   dataEntradaWr?: Date | null;
   situacao?: "ATIVO" | "INATIVO" | "AFASTADO" | "DESLIGADO";
   observacoes?: string | null;
+  /// Quando informado, o novo documento entra numa pessoa que já existe —
+  /// é o caso do vendedor que abre CNPJ e já tinha cadastro no CPF.
+  pessoaId?: string | null;
 }
 
 export async function criarVendedor(
@@ -186,15 +226,30 @@ export async function criarVendedor(
       },
     });
 
-    await tx.vendedorCategoriaHistorico.create({
-      data: {
-        vendedorId: criado.id,
-        categoria: dados.categoriaAtual,
-        vigenteDe: inicioVigencia,
-        motivo: "Categoria inicial no cadastro",
-        usuarioId: usuario.id,
-      },
-    });
+    // Documento novo de alguém que já existe entra na pessoa dela; senão,
+    // nasce uma pessoa própria.
+    const pessoaId = dados.pessoaId
+      ? await vincularAPessoaExistente(tx, criado, dados.pessoaId, usuario)
+      : await criarPessoaParaVendedor(criado, tx, usuario);
+
+    // A pessoa que já tem histórico não ganha um período novo: a categoria
+    // dela continua valendo para o documento recém-criado.
+    const jaTemHistorico = dados.pessoaId
+      ? await tx.vendedorCategoriaHistorico.count({ where: { pessoaId } })
+      : 0;
+
+    if (jaTemHistorico === 0) {
+      await tx.vendedorCategoriaHistorico.create({
+        data: {
+          pessoaId,
+          vendedorId: criado.id,
+          categoria: dados.categoriaAtual,
+          vigenteDe: inicioVigencia,
+          motivo: "Categoria inicial no cadastro",
+          usuarioId: usuario.id,
+        },
+      });
+    }
 
     await tx.vendedorAlocacaoHistorico.create({
       data: {
@@ -235,14 +290,25 @@ export async function alterarCategoria(
 ): Promise<void> {
   const vendedor = await prisma.vendedor.findUniqueOrThrow({
     where: { id: vendedorId },
-    select: { id: true, nome: true, categoriaAtual: true },
+    select: { id: true, nome: true, categoriaAtual: true, pessoaId: true },
   });
+
+  const pessoaId =
+    vendedor.pessoaId ??
+    (await criarPessoaParaVendedor(
+      await prisma.vendedor.findUniqueOrThrow({
+        where: { id: vendedorId },
+        select: { id: true, nome: true, cpfCnpj: true },
+      }),
+      prisma,
+      usuario,
+    ));
 
   const inicio = inicioDoDiaUtc(vigenteDe);
 
   await prisma.$transaction(async (tx) => {
     const periodoAberto = await tx.vendedorCategoriaHistorico.findFirst({
-      where: { vendedorId, vigenteAte: null },
+      where: { pessoaId, vigenteAte: null },
       orderBy: { vigenteDe: "desc" },
     });
 
@@ -257,6 +323,7 @@ export async function alterarCategoria(
 
     await tx.vendedorCategoriaHistorico.create({
       data: {
+        pessoaId,
         vendedorId,
         categoria: novaCategoria,
         vigenteDe: inicio,
@@ -265,25 +332,26 @@ export async function alterarCategoria(
       },
     });
 
-    // A categoria atual do vendedor é apenas o "espelho" do último período.
+    // A categoria atual é apenas o espelho do último período da pessoa, e
+    // vale para todos os documentos dela.
     const maisRecente = await tx.vendedorCategoriaHistorico.findFirst({
-      where: { vendedorId },
+      where: { pessoaId },
       orderBy: { vigenteDe: "desc" },
     });
 
-    await tx.vendedor.update({
-      where: { id: vendedorId },
+    await tx.vendedor.updateMany({
+      where: { pessoaId },
       data: { categoriaAtual: maisRecente?.categoria ?? novaCategoria },
     });
   });
 
   await registrarAuditoria({
     acao: "MUDANCA_CATEGORIA",
-    entidade: "Vendedor",
-    entidadeId: vendedorId,
+    entidade: "Pessoa",
+    entidadeId: pessoaId,
     descricao: `Categoria de ${vendedor.nome} alterada de ${vendedor.categoriaAtual} para ${novaCategoria} a partir de ${inicio.toISOString().slice(0, 10)}`,
     dadosAntes: { categoria: vendedor.categoriaAtual },
-    dadosDepois: { categoria: novaCategoria, vigenteDe: inicio, motivo },
+    dadosDepois: { categoria: novaCategoria, vigenteDe: inicio, motivo, pessoaId },
     usuario,
   });
 }
@@ -354,11 +422,22 @@ export async function registrarRecuperacao(
 
   const vendedor = await prisma.vendedor.findUniqueOrThrow({
     where: { id: vendedorId },
-    select: { nome: true },
+    select: { id: true, nome: true, cpfCnpj: true, pessoaId: true },
+  });
+
+  const pessoaId =
+    vendedor.pessoaId ?? (await criarPessoaParaVendedor(vendedor, prisma, usuario));
+
+  // A recuperação é da pessoa, então alcança as vendas de todos os documentos
+  // dela — o CPF e os CNPJs.
+  const documentos = await prisma.vendedor.findMany({
+    where: { pessoaId },
+    select: { id: true },
   });
 
   const recuperacao = await prisma.vendedorRecuperacao.create({
     data: {
+      pessoaId,
       vendedorId,
       dataInicio: inicioDoDiaUtc(dataInicio),
       dataFim: inicioDoDiaUtc(dataFim),
@@ -371,7 +450,7 @@ export async function registrarRecuperacao(
   // A marcação nunca é retirada depois.
   const marcadas = await prisma.cota.updateMany({
     where: {
-      vendedorEfetivoId: vendedorId,
+      vendedorEfetivoId: { in: documentos.map((documento) => documento.id) },
       emRecuperacao: false,
       dataVenda: {
         gte: inicioDoDiaUtc(dataInicio),
@@ -387,10 +466,17 @@ export async function registrarRecuperacao(
 
   await registrarAuditoria({
     acao: "RECUPERACAO",
-    entidade: "Vendedor",
-    entidadeId: vendedorId,
-    descricao: `Recuperação de ${vendedor.nome} registrada (${dataInicio.toISOString().slice(0, 10)} a ${dataFim.toISOString().slice(0, 10)}). ${marcadas.count} venda(s) marcada(s).`,
-    dadosDepois: { recuperacaoId: recuperacao.id, dataInicio, dataFim, motivo },
+    entidade: "Pessoa",
+    entidadeId: pessoaId,
+    descricao: `Recuperação de ${vendedor.nome} registrada (${dataInicio.toISOString().slice(0, 10)} a ${dataFim.toISOString().slice(0, 10)}), alcançando ${documentos.length} documento(s). ${marcadas.count} venda(s) marcada(s).`,
+    dadosDepois: {
+      recuperacaoId: recuperacao.id,
+      pessoaId,
+      documentos: documentos.length,
+      dataInicio,
+      dataFim,
+      motivo,
+    },
     usuario,
   });
 
@@ -433,11 +519,16 @@ export async function garantirVendedorPorDocumento(
       situacao: "ATIVO",
       observacoes:
         "Criado automaticamente pela importação da base da administradora. " +
-        "Defina categoria, equipe e gerência para que as vendas passem a gerar comissão WR.",
+        "Defina categoria, equipe e gerência para que as vendas passem a gerar comissão WR. " +
+        "Se for outro documento de alguém já cadastrado, use a tela de vínculos.",
     },
-    select: { id: true },
+    select: { id: true, nome: true, cpfCnpj: true },
   });
 
-  cache?.registrar(documento, criado.id);
+  // Nasce numa pessoa própria. O vínculo com os outros documentos do mesmo
+  // vendedor é feito depois, com conferência, na tela de vínculos.
+  const pessoaId = await criarPessoaParaVendedor(criado, db);
+
+  cache?.registrar(documento, criado.id, pessoaId);
   return { id: criado.id, criado: true };
 }
