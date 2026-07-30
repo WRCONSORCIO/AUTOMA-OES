@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { env } from "@/lib/env";
 import { criarSessao } from "@/server/auth/session";
 import { registrarAuditoria } from "@/server/services/auditoria";
 import { criarEstruturaInicial, sistemaInstalado } from "@/server/services/instalacao";
@@ -46,6 +47,10 @@ export async function acaoConfiguracaoInicial(
   let jaInstalado = false;
 
   try {
+    // Valida o ambiente ANTES de gravar qualquer coisa: sem isso, uma variável
+    // ausente deixaria o usuário criado e a sessão não, travando o acesso.
+    env();
+
     // Fora da transação: o cálculo do hash é caro e não depende do banco.
     const senhaHash = await bcrypt.hash(parsed.data.senha, 12);
 
