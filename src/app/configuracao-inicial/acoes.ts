@@ -46,6 +46,14 @@ export async function acaoConfiguracaoInicial(
   let jaInstalado = false;
 
   try {
+    // Fora da transação: o cálculo do hash é caro e não depende do banco.
+    const senhaHash = await bcrypt.hash(parsed.data.senha, 12);
+
+    // A estrutura vem antes e é idempotente. Se algo falhar aqui, nenhum
+    // usuário foi criado ainda, então a tela continua disponível para repetir.
+    await criarEstruturaInicial();
+
+    // A transação fica com o mínimo: só o que precisa de exclusão mútua.
     const criado = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`LOCK TABLE "Usuario" IN SHARE ROW EXCLUSIVE MODE`;
 
@@ -53,18 +61,10 @@ export async function acaoConfiguracaoInicial(
         throw new Error("JA_INSTALADO");
       }
 
-      const usuario = await tx.usuario.create({
-        data: {
-          nome: parsed.data.nome,
-          email,
-          senhaHash: await bcrypt.hash(parsed.data.senha, 12),
-          perfil: "ADMINISTRADOR",
-        },
+      return tx.usuario.create({
+        data: { nome: parsed.data.nome, email, senhaHash, perfil: "ADMINISTRADOR" },
         select: { id: true, nome: true, email: true, perfil: true },
       });
-
-      await criarEstruturaInicial(tx);
-      return usuario;
     });
 
     await criarSessao({
