@@ -75,6 +75,44 @@ export async function recuperacaoNaData(
   return encontrarRecuperacaoNaData(periodos, dataVenda);
 }
 
+export interface AlocacaoVendedor {
+  equipeId: string | null;
+  gerenciaId: string | null;
+}
+
+/**
+ * Equipe e gerência do vendedor na data da venda.
+ *
+ * Diferente da categoria, a alocação é do documento e não da pessoa: o mesmo
+ * vendedor pode operar por CNPJs de equipes distintas. Sem período no histórico
+ * que cubra a data, vale a alocação atual do cadastro — é o melhor palpite para
+ * uma base importada antes de o RH registrar as movimentações.
+ */
+export async function alocacaoNaData(
+  vendedorId: string,
+  dataVenda: Date,
+  db: Cliente = prisma,
+): Promise<AlocacaoVendedor> {
+  const dia = inicioDoDiaUtc(dataVenda);
+
+  const periodo = await db.vendedorAlocacaoHistorico.findFirst({
+    where: {
+      vendedorId,
+      vigenteDe: { lte: dia },
+      OR: [{ vigenteAte: null }, { vigenteAte: { gte: dia } }],
+    },
+    select: { equipeId: true, gerenciaId: true },
+    orderBy: { vigenteDe: "desc" },
+  });
+  if (periodo) return periodo;
+
+  const vendedor = await db.vendedor.findUnique({
+    where: { id: vendedorId },
+    select: { equipeId: true, gerenciaId: true },
+  });
+  return { equipeId: vendedor?.equipeId ?? null, gerenciaId: vendedor?.gerenciaId ?? null };
+}
+
 /** Pessoa dona do cadastro. */
 export async function pessoaDoVendedor(
   vendedorId: string,
@@ -98,6 +136,7 @@ export async function pessoaDoVendedor(
 export class CacheVendedores {
   private categorias = new Map<string, PeriodoCategoria[]>();
   private recuperacoes = new Map<string, PeriodoRecuperacao[]>();
+  private alocacoes = new Map<string, AlocacaoVendedor>();
   private porDocumento = new Map<string, string | null>();
   private pessoaPorVendedor = new Map<string, string | null>();
 
@@ -130,6 +169,17 @@ export class CacheVendedores {
       this.categorias.set(pessoaId, historico);
     }
     return resolverCategoriaNaData(historico, dataVenda);
+  }
+
+  /** A alocação é do documento, então a chave inclui a data consultada. */
+  async alocacaoNaData(vendedorId: string, dataVenda: Date): Promise<AlocacaoVendedor> {
+    const chave = `${vendedorId}|${inicioDoDiaUtc(dataVenda).toISOString().slice(0, 10)}`;
+    const guardada = this.alocacoes.get(chave);
+    if (guardada) return guardada;
+
+    const alocacao = await alocacaoNaData(vendedorId, dataVenda, this.db);
+    this.alocacoes.set(chave, alocacao);
+    return alocacao;
   }
 
   async recuperacaoNaData(

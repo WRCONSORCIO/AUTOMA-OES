@@ -12,6 +12,7 @@ export interface ItemNavegacao {
 export const NAVEGACAO: readonly ItemNavegacao[] = [
   { href: "/", rotulo: "Dashboard", modulo: "dashboard", icone: "dashboard", grupo: "Operação" },
   { href: "/comissoes", rotulo: "Comissões WR", modulo: "comissoes", icone: "comissoes", grupo: "Operação" },
+  { href: "/comissoes-equipe", rotulo: "Comissões da equipe", modulo: "comissoesEquipe", icone: "comissoesEquipe", grupo: "Operação" },
   { href: "/clientes", rotulo: "Clientes (cotas)", modulo: "cotas", icone: "cotas", grupo: "Operação" },
   { href: "/importacoes", rotulo: "Importações", modulo: "importacoes", icone: "importacoes", grupo: "Operação" },
 

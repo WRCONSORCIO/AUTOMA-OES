@@ -8,6 +8,7 @@ import {
   Building2,
   ClipboardList,
   Database,
+  HandCoins,
   HardDriveDownload,
   LayoutDashboard,
   Menu,
@@ -28,6 +29,7 @@ import { GRUPOS, NAVEGACAO, type ItemNavegacao } from "./navegacao";
 const ICONES = {
   dashboard: LayoutDashboard,
   comissoes: BadgeDollarSign,
+  comissoesEquipe: HandCoins,
   cotas: Database,
   importacoes: Upload,
   vendedores: Users,

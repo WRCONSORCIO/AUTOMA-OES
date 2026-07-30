@@ -4,6 +4,7 @@ import { Prisma, type CategoriaVendedor } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calcularComissaoWr, type FaixaParcela } from "@/server/domain/regras";
 import { registrarAuditoria } from "./auditoria";
+import { apurarComissoesEquipe } from "./comissao-equipe";
 import { CacheVendedores, type ContextoUsuario } from "./vendedores";
 
 const TAMANHO_LOTE = 500;
@@ -12,9 +13,15 @@ export interface ResumoRecalculo {
   cotasAvaliadas: number;
   cotasComCategoriaPreenchida: number;
   cotasMarcadasEmRecuperacao: number;
+  /** Vendas que estavam sem equipe/gerência e receberam a alocação do vendedor. */
+  cotasComUnidadePreenchida: number;
   lancamentosAvaliados: number;
   lancamentosAtualizados: number;
   valorComissaoWr: number;
+  /** Comissão da equipe apurada no mesmo passe. */
+  linhasComissaoEquipe: number;
+  valorComissaoEquipePrevisto: number;
+  valorComissaoEquipeLiberado: number;
 }
 
 /**
@@ -36,9 +43,13 @@ export async function recalcularComissoes(
     cotasAvaliadas: 0,
     cotasComCategoriaPreenchida: 0,
     cotasMarcadasEmRecuperacao: 0,
+    cotasComUnidadePreenchida: 0,
     lancamentosAvaliados: 0,
     lancamentosAtualizados: 0,
     valorComissaoWr: 0,
+    linhasComissaoEquipe: 0,
+    valorComissaoEquipePrevisto: 0,
+    valorComissaoEquipeLiberado: 0,
   };
 
   const cache = new CacheVendedores(prisma);
@@ -46,10 +57,17 @@ export async function recalcularComissoes(
   await preencherSnapshotsDeCotas(cache, resumo);
   await recalcularLancamentos(cache, resumo);
 
+  // A comissão da equipe depende dos snapshots acima e dos recebimentos, então
+  // vem sempre no fim — nunca antes de a categoria da venda estar resolvida.
+  const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+  resumo.linhasComissaoEquipe = equipe.linhasGravadas;
+  resumo.valorComissaoEquipePrevisto = equipe.valorPrevisto;
+  resumo.valorComissaoEquipeLiberado = equipe.valorLiberado;
+
   await registrarAuditoria({
     acao: "RECALCULO_COMISSAO",
     entidade: "ComissaoWr",
-    descricao: `Recálculo executado: ${resumo.cotasComCategoriaPreenchida} venda(s) com categoria preenchida, ${resumo.lancamentosAtualizados} lançamento(s) atualizado(s)`,
+    descricao: `Recálculo executado: ${resumo.cotasComCategoriaPreenchida} venda(s) com categoria preenchida, ${resumo.lancamentosAtualizados} lançamento(s) atualizado(s), ${equipe.linhasGravadas} linha(s) de comissão da equipe`,
     dadosDepois: resumo,
     usuario,
   });
@@ -73,7 +91,12 @@ async function preencherSnapshotsDeCotas(
       where: {
         vendedorEfetivoId: { not: null },
         dataVenda: { not: null },
-        OR: [{ categoriaVenda: null }, { emRecuperacao: false }],
+        OR: [
+          { categoriaVenda: null },
+          { emRecuperacao: false },
+          { equipeId: null },
+          { gerenciaId: null },
+        ],
       },
       select: {
         id: true,
@@ -81,6 +104,8 @@ async function preencherSnapshotsDeCotas(
         vendedorEfetivoId: true,
         categoriaVenda: true,
         emRecuperacao: true,
+        equipeId: true,
+        gerenciaId: true,
       },
       orderBy: { id: "asc" },
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -114,6 +139,20 @@ async function preencherSnapshotsDeCotas(
           dados.recuperacao = { connect: { id: recuperacao.id } };
           dados.recuperacaoFixadaEm = new Date();
           resumo.cotasMarcadasEmRecuperacao += 1;
+        }
+      }
+
+      // A equipe e a gerência da venda ficam vazias quando a base é importada
+      // antes de o vendedor ser alocado. Preenche onde falta, nunca sobrescreve:
+      // é o que permite a comissão de supervisão e gerência sobre o histórico.
+      if (!cota.equipeId || !cota.gerenciaId) {
+        const alocacao = await cache.alocacaoNaData(vendedorId, dataVenda);
+        if (!cota.equipeId && alocacao.equipeId) {
+          dados.equipe = { connect: { id: alocacao.equipeId } };
+          resumo.cotasComUnidadePreenchida += 1;
+        }
+        if (!cota.gerenciaId && alocacao.gerenciaId) {
+          dados.gerencia = { connect: { id: alocacao.gerenciaId } };
         }
       }
 

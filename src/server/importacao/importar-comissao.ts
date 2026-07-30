@@ -16,6 +16,7 @@ import {
   type ContextoUsuario,
 } from "@/server/services/vendedores";
 import { registrarAuditoria } from "@/server/services/auditoria";
+import { apurarComissoesEquipe } from "@/server/services/comissao-equipe";
 import { lerPdfComissao, type RegistroComissaoPdf } from "./pdf-comissao";
 
 const TAMANHO_LOTE = 100;
@@ -140,6 +141,9 @@ export async function importarComissaoPdf(
 
     const status = contadores.erros > 0 ? "CONCLUIDA_COM_ERROS" : "CONCLUIDA";
 
+    // Cada parcela recebida libera a comissão da equipe: reapura na sequência.
+    const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+
     await prisma.importacao.update({
       where: { id: importacao.id },
       data: {
@@ -159,6 +163,11 @@ export async function importarComissaoPdf(
           semCategoria: contadores.semCategoria,
           comissaoWrCalculada: contadores.comissaoWrCalculada,
           valorComissaoWr: arredondar(valorComissaoWr),
+          comissaoEquipe: {
+            linhas: equipe.linhasGravadas,
+            previsto: equipe.valorPrevisto,
+            liberado: equipe.valorLiberado,
+          },
         },
       },
     });

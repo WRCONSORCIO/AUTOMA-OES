@@ -112,6 +112,23 @@ enum AcaoAuditoria {
   RECALCULO_COMISSAO
 }
 
+/// Quem recebe a comissão interna da WR sobre uma venda.
+enum PapelComissao {
+  VENDEDOR
+  SUPERVISOR
+  GERENCIA
+}
+
+/// Condição que liga ou desliga a linha da regra.
+enum CondicaoComissao {
+  /// Vale sempre para a categoria.
+  SEMPRE
+  /// Só quando a supervisão da venda é diferente da gerência.
+  SUPERVISAO_DIFERENTE_GERENCIA
+  /// Só quando a equipe da venda está marcada como habilitada.
+  EQUIPE_HABILITADA
+}
+
 enum TipoBackup {
   AUTOMATICO
   MANUAL
@@ -172,6 +189,7 @@ model Gerencia {
   usuarios          Usuario[]
   cotas             Cota[]
   comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
   alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@index([status])
@@ -185,12 +203,16 @@ model Equipe {
   criadoEm     DateTime       @default(now())
   atualizadoEm DateTime       @updatedAt
 
+  /// Marca a equipe para as regras cuja condição é EQUIPE_HABILITADA.
+  habilitadaComissao Boolean @default(false)
+
   gerencia Gerencia @relation(fields: [gerenciaId], references: [id])
 
   vendedores        Vendedor[]
   usuarios          Usuario[]
   cotas             Cota[]
   comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
   alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@unique([gerenciaId, nome])
@@ -219,6 +241,7 @@ model Pessoa {
   historicoCategorias VendedorCategoriaHistorico[]
   recuperacoes        VendedorRecuperacao[]
   vinculos            PessoaVinculoHistorico[]
+  comissoesEquipe     ComissaoEquipe[]
 
   @@index([nome])
 }
@@ -472,6 +495,7 @@ model Cota {
   override          CotaVendedorOverride?
   overrideHistorico CotaVendedorOverrideHistorico[]
   comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
   estorno           Estorno?
 
   @@unique([administradoraId, contrato, grupo, cota, cpfCnpjCliente], name: "identidadeCota")
@@ -690,6 +714,83 @@ model FaixaComissao {
   tabela TabelaComissao @relation(fields: [tabelaId], references: [id], onDelete: Cascade)
 
   @@unique([tabelaId, parcela])
+}
+
+/// Tabela de comissão que a WR paga à própria equipe, por categoria da venda.
+/// Versionada por vigência: alterar percentuais nunca reescreve o que já foi
+/// apurado com os valores da época.
+model TabelaComissaoEquipe {
+  id                    String            @id @default(cuid())
+  nome                  String
+  categoria             CategoriaVendedor
+  vigenteDe             DateTime          @db.Date
+  vigenteAte            DateTime?         @db.Date
+  ativo                 Boolean           @default(true)
+  /// Em quantas parcelas recebidas a comissão prevista é liberada.
+  /// 1 libera tudo no primeiro recebimento da venda.
+  parcelasParaLiberacao Int               @default(1)
+  criadoEm              DateTime          @default(now())
+  atualizadoEm          DateTime          @updatedAt
+
+  regras    RegraComissaoEquipe[]
+  comissoes ComissaoEquipe[]
+
+  @@index([categoria, vigenteDe])
+}
+
+model RegraComissaoEquipe {
+  id         String           @id @default(cuid())
+  tabelaId   String
+  papel      PapelComissao
+  percentual Decimal          @db.Decimal(9, 4)
+  condicao   CondicaoComissao @default(SEMPRE)
+  criadoEm   DateTime         @default(now())
+
+  tabela    TabelaComissaoEquipe @relation(fields: [tabelaId], references: [id], onDelete: Cascade)
+  comissoes ComissaoEquipe[]
+
+  @@unique([tabelaId, papel])
+}
+
+/// Comissão apurada por venda e por papel.
+///
+/// `valorPrevisto` nasce com a venda; `valorLiberado` acompanha os
+/// recebimentos que a administradora já pagou para aquela cota.
+model ComissaoEquipe {
+  id             String            @id @default(cuid())
+  cotaId         String
+  papel          PapelComissao
+  categoriaVenda CategoriaVendedor
+
+  /// Quem recebe: a pessoa (vendedor) ou a unidade (supervisão/gerência).
+  pessoaId   String?
+  equipeId   String?
+  gerenciaId String?
+
+  baseCalculo       Decimal @db.Decimal(18, 2)
+  percentual        Decimal @db.Decimal(9, 4)
+  valorPrevisto     Decimal @db.Decimal(18, 2)
+  valorLiberado     Decimal @default(0) @db.Decimal(18, 2)
+  parcelasRecebidas Int     @default(0)
+
+  tabelaId String?
+  regraId  String?
+  regra    String
+
+  calculadoEm DateTime @default(now())
+
+  cota     Cota                  @relation(fields: [cotaId], references: [id], onDelete: Cascade)
+  pessoa   Pessoa?               @relation(fields: [pessoaId], references: [id])
+  equipe   Equipe?               @relation(fields: [equipeId], references: [id])
+  gerencia Gerencia?             @relation(fields: [gerenciaId], references: [id])
+  tabela   TabelaComissaoEquipe? @relation(fields: [tabelaId], references: [id])
+  regraRef RegraComissaoEquipe?  @relation(fields: [regraId], references: [id])
+
+  @@unique([cotaId, papel])
+  @@index([pessoaId])
+  @@index([equipeId])
+  @@index([gerenciaId])
+  @@index([categoriaVenda])
 }
 
 model ModalidadeFlex {

@@ -6,7 +6,13 @@ import { exigirPermissao } from "@/server/auth/session";
 import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatarDocumento } from "@/lib/normalize";
-import { formatarData, formatarDataHora, formatarMoeda, formatarNumero } from "@/lib/format";
+import {
+  formatarData,
+  formatarDataHora,
+  formatarMoeda,
+  formatarNumero,
+  formatarPercentual,
+} from "@/lib/format";
 import {
   Aviso,
   Badge,
@@ -24,6 +30,7 @@ import {
 } from "@/components/ui";
 import { Indicador } from "@/components/indicador";
 import { carregarFichaPessoa } from "@/server/services/pessoas";
+import { carregarComissoesDaPessoa } from "@/server/services/comissao-equipe";
 import { PainelVendedor } from "./painel";
 import { BotaoSeparar } from "../../vinculos/formularios";
 
@@ -62,7 +69,8 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
   const ficha = vendedor.pessoa ? await carregarFichaPessoa(vendedor.pessoa.id) : null;
   const documentosDaPessoa = ficha?.documentos.map((documento) => documento.vendedorId) ?? [id];
 
-  const [resumoCotas, comissaoWr, cotasRecuperacao, equipes, gerencias] = await Promise.all([
+  const [resumoCotas, comissaoWr, cotasRecuperacao, equipes, gerencias, comissoesEquipe] =
+    await Promise.all([
     prisma.cota.aggregate({
       where: { vendedorEfetivoId: { in: documentosDaPessoa } },
       _count: { _all: true },
@@ -85,7 +93,11 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
       select: { id: true, nome: true },
       orderBy: { nome: "asc" },
     }),
+    vendedor.pessoa ? carregarComissoesDaPessoa(vendedor.pessoa.id) : Promise.resolve([]),
   ]);
+
+  const totalPrevisto = comissoesEquipe.reduce((soma, linha) => soma + linha.previsto, 0);
+  const totalLiberado = comissoesEquipe.reduce((soma, linha) => soma + linha.liberado, 0);
 
   const podeEditar = podeAcessar(sessao.perfil, "vendedores", "editar");
   const historicoCategorias = vendedor.pessoa?.historicoCategorias ?? [];
@@ -140,6 +152,12 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
           valor={formatarMoeda(resumoCotas._sum.valorCredito ?? 0)}
         />
         <Indicador rotulo="Comissão WR gerada" valor={formatarMoeda(comissaoWr._sum.valor ?? 0)} />
+        <Indicador
+          rotulo="Comissão a receber"
+          valor={formatarMoeda(totalPrevisto)}
+          detalhe={`${formatarMoeda(totalLiberado)} já liberados pelas parcelas recebidas`}
+          tom={totalPrevisto > 0 ? "bom" : "neutro"}
+        />
         <Indicador
           rotulo="Vendas em recuperação"
           valor={formatarNumero(cotasRecuperacao)}
@@ -238,6 +256,70 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Comissão desta pessoa, venda a venda</CardTitle>
+          <p className="text-sm text-[var(--color-texto-2)]">
+            Cada linha usa o percentual da tabela vigente para a categoria daquela venda. O
+            liberado acompanha as parcelas que a WR já recebeu da administradora.
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Tabela>
+            <Cabecalho>
+              <tr>
+                <Th>Venda</Th>
+                <Th>Cliente</Th>
+                <Th>Data</Th>
+                <Th>Categoria</Th>
+                <Th className="text-right">Base</Th>
+                <Th className="text-right">%</Th>
+                <Th className="text-right">Previsto</Th>
+                <Th className="text-right">Liberado</Th>
+                <Th className="text-right">Parcelas</Th>
+              </tr>
+            </Cabecalho>
+            <tbody>
+              {comissoesEquipe.length === 0 ? (
+                <TabelaVazia
+                  colunas={9}
+                  mensagem="Nenhuma comissão apurada. Verifique se há categoria no histórico e tabela de comissão da equipe vigente."
+                />
+              ) : (
+                comissoesEquipe.map((linha) => (
+                  <Tr key={linha.cotaId}>
+                    <Td className="numerico whitespace-nowrap">
+                      <Link
+                        href={`/clientes/${linha.cotaId}`}
+                        className="text-[var(--color-marca-forte)] hover:underline"
+                      >
+                        {linha.grupo}-{linha.cota}
+                      </Link>
+                    </Td>
+                    <Td>{linha.nomeCliente}</Td>
+                    <Td className="whitespace-nowrap">{formatarData(linha.dataVenda)}</Td>
+                    <Td>
+                      <Badge tom="marca">{linha.categoriaVenda}</Badge>
+                    </Td>
+                    <Td className="numerico text-right">{formatarMoeda(linha.baseCalculo)}</Td>
+                    <Td className="numerico text-right">{formatarPercentual(linha.percentual)}</Td>
+                    <Td className="numerico text-right font-medium">
+                      {formatarMoeda(linha.previsto)}
+                    </Td>
+                    <Td className="numerico text-right text-[var(--color-bom)]">
+                      {formatarMoeda(linha.liberado)}
+                    </Td>
+                    <Td className="numerico text-right">
+                      {formatarNumero(linha.parcelasRecebidas)}
+                    </Td>
+                  </Tr>
+                ))
+              )}
+            </tbody>
+          </Tabela>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
