@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { sistemaInstalado } from "@/server/services/instalacao";
+import { env } from "@/lib/env";
 import { Card, CardContent } from "@/components/ui";
 import { FormularioConfiguracaoInicial } from "./formulario";
 
@@ -10,6 +11,14 @@ export const dynamic = "force-dynamic";
 export default async function PaginaConfiguracaoInicial() {
   // A tela só existe enquanto o sistema não tem nenhum usuário.
   if (await sistemaInstalado()) redirect("/login");
+
+  // Problema de configuração é mostrado aqui, antes de o formulário aparecer.
+  let erroAmbiente: string | null = null;
+  try {
+    env();
+  } catch (erro) {
+    erroAmbiente = erro instanceof Error ? erro.message : "Configuração de ambiente inválida.";
+  }
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-[var(--color-superficie)] px-4 py-10">
@@ -27,7 +36,22 @@ export default async function PaginaConfiguracaoInicial() {
 
         <Card>
           <CardContent>
-            <FormularioConfiguracaoInicial />
+            {erroAmbiente ? (
+              <div className="flex flex-col gap-3 text-sm">
+                <p className="rounded-lg bg-[color-mix(in_oklab,var(--color-critico)_12%,transparent)] px-3 py-2 text-[var(--color-critico)]">
+                  {erroAmbiente}
+                </p>
+                <p className="text-[var(--color-texto-2)]">
+                  Cadastre as variáveis de ambiente no servidor e publique novamente. São
+                  necessárias <code className="numerico">DATABASE_URL</code>,{" "}
+                  <code className="numerico">DIRECT_URL</code> e{" "}
+                  <code className="numerico">AUTH_SECRET</code> — esta última com no mínimo 32
+                  caracteres.
+                </p>
+              </div>
+            ) : (
+              <FormularioConfiguracaoInicial />
+            )}
           </CardContent>
         </Card>
 
