@@ -15,7 +15,11 @@ import {
   type PeriodoRecuperacao,
 } from "@/server/domain/regras";
 import { registrarAuditoria } from "./auditoria";
-import { criarPessoaParaVendedor, vincularAPessoaExistente } from "./pessoas";
+import {
+  criarPessoaParaVendedor,
+  sincronizarCategoriaAtual,
+  vincularAPessoaExistente,
+} from "./pessoas";
 
 type Cliente = Prisma.TransactionClient | typeof prisma;
 
@@ -362,37 +366,43 @@ export async function alterarCategoria(
       orderBy: { vigenteDe: "desc" },
     });
 
-    if (periodoAberto) {
-      const fim = new Date(inicio);
-      fim.setUTCDate(fim.getUTCDate() - 1);
+    // Quando a nova vigência começa no mesmo dia do período aberto, ou antes
+    // dele, aquele período inteiro deixa de ter existido: é o cadastro que
+    // nasce Iniciante e é ajustado em seguida, ou a correção retroativa de uma
+    // categoria lançada errada. Corrige-se o período no lugar de abrir outro —
+    // fechá-lo na véspera criaria um trecho que termina antes de começar.
+    const substituiPeriodoAberto =
+      periodoAberto !== null &&
+      inicioDoDiaUtc(periodoAberto.vigenteDe).getTime() >= inicio.getTime();
+
+    if (substituiPeriodoAberto) {
       await tx.vendedorCategoriaHistorico.update({
         where: { id: periodoAberto.id },
-        data: { vigenteAte: fim },
+        data: { categoria: novaCategoria, vigenteDe: inicio, motivo, usuarioId: usuario.id },
+      });
+    } else {
+      if (periodoAberto) {
+        const fim = new Date(inicio);
+        fim.setUTCDate(fim.getUTCDate() - 1);
+        await tx.vendedorCategoriaHistorico.update({
+          where: { id: periodoAberto.id },
+          data: { vigenteAte: fim },
+        });
+      }
+
+      await tx.vendedorCategoriaHistorico.create({
+        data: {
+          pessoaId,
+          vendedorId,
+          categoria: novaCategoria,
+          vigenteDe: inicio,
+          motivo,
+          usuarioId: usuario.id,
+        },
       });
     }
 
-    await tx.vendedorCategoriaHistorico.create({
-      data: {
-        pessoaId,
-        vendedorId,
-        categoria: novaCategoria,
-        vigenteDe: inicio,
-        motivo,
-        usuarioId: usuario.id,
-      },
-    });
-
-    // A categoria atual é apenas o espelho do último período da pessoa, e
-    // vale para todos os documentos dela.
-    const maisRecente = await tx.vendedorCategoriaHistorico.findFirst({
-      where: { pessoaId },
-      orderBy: { vigenteDe: "desc" },
-    });
-
-    await tx.vendedor.updateMany({
-      where: { pessoaId },
-      data: { categoriaAtual: maisRecente?.categoria ?? novaCategoria },
-    });
+    await sincronizarCategoriaAtual(tx, pessoaId);
   });
 
   await registrarAuditoria({

@@ -1,7 +1,8 @@
 import "server-only";
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { CategoriaVendedor, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { resolverCategoriaNaData } from "@/server/domain/regras";
 import {
   agruparSugestoes,
   type Confianca,
@@ -87,6 +88,35 @@ export async function vincularAPessoaExistente(
   });
 
   return pessoaId;
+}
+
+/**
+ * Espelha nos documentos da pessoa a categoria que vale HOJE.
+ *
+ * `categoriaAtual` é um atalho de leitura para as telas; a verdade é o
+ * histórico. Resolver pela data — em vez de pegar o último período cadastrado —
+ * evita dois enganos:
+ *
+ * - um período que começa no futuro não pode valer hoje;
+ * - dois períodos que começam no mesmo dia (o cadastro nasce Iniciante e a
+ *   categoria é trocada no mesmo dia) não podem ser desempatados por ordem de
+ *   chegada. Era o que fazia a troca "não salvar".
+ */
+export async function sincronizarCategoriaAtual(
+  db: Cliente,
+  pessoaId: string,
+): Promise<CategoriaVendedor | null> {
+  const historico = await db.vendedorCategoriaHistorico.findMany({
+    where: { pessoaId },
+    select: { categoria: true, vigenteDe: true, vigenteAte: true },
+    orderBy: { vigenteDe: "asc" },
+  });
+
+  const categoria = resolverCategoriaNaData(historico, new Date());
+  if (!categoria) return null;
+
+  await db.vendedor.updateMany({ where: { pessoaId }, data: { categoriaAtual: categoria } });
+  return categoria;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,20 +352,9 @@ export async function vincularDocumentos(
     }
 
     // Os documentos chegam cada um com a categoria que tinham quando eram
-    // pessoas separadas. Depois do vínculo existe uma categoria só — a do
-    // último período da pessoa — e ela vale para todos eles.
-    const maisRecente = await tx.vendedorCategoriaHistorico.findFirst({
-      where: { pessoaId: destinoId },
-      orderBy: { vigenteDe: "desc" },
-      select: { categoria: true },
-    });
-
-    if (maisRecente) {
-      await tx.vendedor.updateMany({
-        where: { pessoaId: destinoId },
-        data: { categoriaAtual: maisRecente.categoria },
-      });
-    }
+    // pessoas separadas. Depois do vínculo existe uma categoria só, a que o
+    // histórico da pessoa dá para hoje, e ela vale para todos eles.
+    await sincronizarCategoriaAtual(tx, destinoId);
   });
 
   await registrarAuditoria({

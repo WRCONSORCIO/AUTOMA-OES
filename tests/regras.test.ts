@@ -23,6 +23,31 @@ const TABELA_INICIANTE: FaixaParcela[] = [
   { parcela: 4, percentual: 1 },
 ];
 
+describe("períodos que se sobrepõem no mesmo dia", () => {
+  // O cadastro nasce Iniciante e a categoria é trocada no mesmo dia: os dois
+  // períodos começam na mesma data, e desempatar por ordem de chegada fazia a
+  // troca "não salvar".
+  it("o período encerrado antes de começar nunca vale", () => {
+    const historico = [
+      { categoria: "INICIANTE" as const, vigenteDe: dia("2026-07-31"), vigenteAte: dia("2026-07-30") },
+      { categoria: "EXPERT" as const, vigenteDe: dia("2026-07-31"), vigenteAte: null },
+    ];
+
+    expect(resolverCategoriaNaData(historico, dia("2026-07-31"))).toBe("EXPERT");
+    expect(resolverCategoriaNaData(historico, dia("2026-08-15"))).toBe("EXPERT");
+  });
+
+  it("período que começa no futuro não vale hoje", () => {
+    const historico = [
+      { categoria: "INICIANTE" as const, vigenteDe: dia("2026-07-01"), vigenteAte: dia("2026-08-29") },
+      { categoria: "EXPERT" as const, vigenteDe: dia("2026-08-30"), vigenteAte: null },
+    ];
+
+    expect(resolverCategoriaNaData(historico, dia("2026-07-31"))).toBe("INICIANTE");
+    expect(resolverCategoriaNaData(historico, dia("2026-08-30"))).toBe("EXPERT");
+  });
+});
+
 describe("categoria pertence à venda, não ao vendedor", () => {
   // Pedro: Iniciante desde 01/01, Veterano a partir de 15/07, Expert em 20/02/2027.
   const historico = [
