@@ -7,9 +7,14 @@ import { normalizarTexto } from "@/lib/normalize";
 import {
   calcularComissaoWr,
   hashConteudo,
+  normalizarSegmento,
   resolverVendedorEfetivo,
-  type FaixaParcela,
 } from "@/server/domain/regras";
+import {
+  carregarTabelasWr,
+  resolverTabelaWr,
+  type TabelaWr,
+} from "@/server/services/tabelas";
 import {
   CacheVendedores,
   garantirVendedorPorDocumento,
@@ -94,7 +99,7 @@ export async function importarComissaoPdf(
       });
     }
 
-    const tabelas = await carregarTabelasVigentes();
+    const tabelas = await carregarTabelasWr();
     const cache = new CacheVendedores(prisma);
 
     for (let inicio = 0; inicio < leitura.registros.length; inicio += TAMANHO_LOTE) {
@@ -208,40 +213,13 @@ function arredondar(valor: number): number {
   return Math.round(valor * 100) / 100;
 }
 
-type TabelasVigentes = Map<CategoriaVendedor, { id: string; faixas: FaixaParcela[] }>;
-
-async function carregarTabelasVigentes(): Promise<TabelasVigentes> {
-  const hoje = new Date();
-  const tabelas = await prisma.tabelaComissao.findMany({
-    where: {
-      ativo: true,
-      vigenteDe: { lte: hoje },
-      OR: [{ vigenteAte: null }, { vigenteAte: { gte: hoje } }],
-    },
-    include: { faixas: { orderBy: { parcela: "asc" } } },
-    orderBy: { vigenteDe: "desc" },
-  });
-
-  const mapa: TabelasVigentes = new Map();
-  for (const tabela of tabelas) {
-    if (mapa.has(tabela.categoria)) continue;
-    mapa.set(tabela.categoria, {
-      id: tabela.id,
-      faixas: tabela.faixas.map((faixa) => ({
-        parcela: faixa.parcela,
-        percentual: Number(faixa.percentual),
-      })),
-    });
-  }
-  return mapa;
-}
 
 interface EntradaGravacao {
   registro: RegistroComissaoPdf;
   importacaoId: string;
   administradoraId: string;
   hashArquivo: string;
-  tabelas: TabelasVigentes;
+  tabelas: TabelaWr[];
   cache: CacheVendedores;
 }
 
@@ -326,7 +304,17 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
   const dataReferencia =
     registro.dataPagamento ?? registro.dataContabil ?? registro.dataVenda ?? new Date();
 
-  const tabela = categoria ? entrada.tabelas.get(categoria) : undefined;
+  // Imóvel e automóvel têm tabelas próprias; sem tabela do segmento, vale a geral.
+  const segmento =
+    normalizarSegmento(registro.objeto) ?? cota?.segmentoVenda ?? null;
+
+  // A tabela é a vigente na data da venda, não a de hoje.
+  const tabela = resolverTabelaWr(
+    entrada.tabelas,
+    categoria,
+    segmento,
+    registro.dataVenda ?? cota?.dataVenda ?? dataReferencia,
+  );
 
   const calculo = calcularComissaoWr({
     categoria,
@@ -381,6 +369,7 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
       gerenciaId: alocacao?.gerenciaId ?? null,
       categoriaVenda: categoria,
       emRecuperacao,
+      segmentoVenda: segmento,
       status,
       hashRegistro,
       paginaPdf: registro.pagina,
@@ -440,6 +429,7 @@ async function localizarCota(administradoraId: string, registro: RegistroComissa
       nomeCliente: true,
       categoriaVenda: true,
       emRecuperacao: true,
+      segmentoVenda: true,
       equipeId: true,
       gerenciaId: true,
       dataVenda: true,

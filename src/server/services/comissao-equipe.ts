@@ -1,6 +1,11 @@
 import "server-only";
 
-import { Prisma, type CategoriaVendedor, type PapelComissao } from "@prisma/client";
+import {
+  Prisma,
+  type CategoriaVendedor,
+  type PapelComissao,
+  type SegmentoVenda,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizarTexto } from "@/lib/normalize";
 import {
@@ -9,6 +14,7 @@ import {
   type ContextoVenda,
   type RegraPapel,
 } from "@/server/domain/comissao-equipe";
+import { resolverPorVigencia } from "@/server/domain/vigencia";
 import { registrarAuditoria } from "./auditoria";
 import type { ContextoUsuario } from "./vendedores";
 
@@ -28,6 +34,7 @@ interface TabelaVigente {
   id: string;
   nome: string;
   categoria: CategoriaVendedor;
+  segmento: SegmentoVenda | null;
   vigenteDe: Date;
   vigenteAte: Date | null;
   parcelasParaLiberacao: number;
@@ -82,6 +89,7 @@ export async function apurarComissoesEquipe(options?: {
         valorCredito: true,
         temFlex: true,
         taxaFlex: true,
+        segmentoVenda: true,
         equipeId: true,
         gerenciaId: true,
         vendedorEfetivoId: true,
@@ -107,7 +115,12 @@ export async function apurarComissoesEquipe(options?: {
       resumo.cotasAvaliadas += 1;
 
       const categoria = cota.categoriaVenda!;
-      const tabela = resolverTabela(tabelas, categoria, cota.dataVenda!);
+      const tabela = resolverTabela(
+        tabelas,
+        categoria,
+        cota.segmentoVenda,
+        cota.dataVenda!,
+      );
 
       if (!tabela) {
         // Sem tabela vigente não há o que pagar: a apuração anterior sai junto.
@@ -379,6 +392,7 @@ export async function carregarTabelasEquipe(): Promise<TabelaVigente[]> {
     id: tabela.id,
     nome: tabela.nome,
     categoria: tabela.categoria,
+    segmento: tabela.segmento,
     vigenteDe: tabela.vigenteDe,
     vigenteAte: tabela.vigenteAte,
     parcelasParaLiberacao: tabela.parcelasParaLiberacao,
@@ -391,19 +405,17 @@ export async function carregarTabelasEquipe(): Promise<TabelaVigente[]> {
   }));
 }
 
-/** A tabela vigente na data da venda; havendo sobreposição, vence a mais recente. */
+/**
+ * A tabela vigente na data da venda, específica do segmento quando existir.
+ * Mesma resolução da tabela da WR — a regra de vigência é uma só.
+ */
 function resolverTabela(
   tabelas: TabelaVigente[],
   categoria: CategoriaVendedor,
+  segmento: SegmentoVenda | null,
   dataVenda: Date,
 ): TabelaVigente | null {
-  for (const tabela of tabelas) {
-    if (tabela.categoria !== categoria) continue;
-    if (tabela.vigenteDe > dataVenda) continue;
-    if (tabela.vigenteAte && tabela.vigenteAte < dataVenda) continue;
-    return tabela;
-  }
-  return null;
+  return resolverPorVigencia(tabelas, categoria, segmento, dataVenda);
 }
 
 // ---------------------------------------------------------------------------

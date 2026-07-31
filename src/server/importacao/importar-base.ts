@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   chaveDuplicidade,
+  normalizarSegmento,
   chaveIdentidadeCota,
   deveGerarEstorno,
   hashConteudo,
@@ -317,6 +318,7 @@ function camposMutaveis(linha: LinhaBase) {
     valorSeguro: decimalOuNulo(linha.valorSeguro),
     temFlex: linha.temFlex,
     taxaFlex: decimalOuNulo(linha.taxaFlex),
+    segmentoVenda: normalizarSegmento(linha.segmento ?? linha.produto),
     cpfCnpjParceiro: linha.cpfCnpjParceiro,
     cpfCnpjVendedorAdm: linha.cpfCnpjVendedor || null,
     nomeVendedorAdm: linha.nomeVendedor,
