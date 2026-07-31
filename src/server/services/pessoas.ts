@@ -320,6 +320,22 @@ export async function vincularDocumentos(
         data: { pessoaId: destinoId },
       });
     }
+
+    // Os documentos chegam cada um com a categoria que tinham quando eram
+    // pessoas separadas. Depois do vínculo existe uma categoria só — a do
+    // último período da pessoa — e ela vale para todos eles.
+    const maisRecente = await tx.vendedorCategoriaHistorico.findFirst({
+      where: { pessoaId: destinoId },
+      orderBy: { vigenteDe: "desc" },
+      select: { categoria: true },
+    });
+
+    if (maisRecente) {
+      await tx.vendedor.updateMany({
+        where: { pessoaId: destinoId },
+        data: { categoriaAtual: maisRecente.categoria },
+      });
+    }
   });
 
   await registrarAuditoria({

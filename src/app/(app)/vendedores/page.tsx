@@ -9,6 +9,7 @@ import { formatarDocumento } from "@/lib/normalize";
 import { formatarData, formatarNumero } from "@/lib/format";
 import { inteiro, texto, type ParametrosBusca } from "@/lib/filtros";
 import {
+  Aviso,
   Badge,
   Cabecalho,
   CabecalhoPagina,
@@ -38,6 +39,13 @@ const TOM_CATEGORIA = {
   EXPERT: "bom",
 } as const;
 
+/**
+ * A lista é de pessoas, não de documentos.
+ *
+ * Quem vende no CPF e no CNPJ é uma pessoa só: aparecer duas vezes aqui
+ * confunde e faz as vendas da mesma pessoa parecerem de gente diferente. A
+ * quebra por documento continua na ficha, a um clique.
+ */
 export default async function PaginaVendedores({
   searchParams,
 }: {
@@ -52,7 +60,9 @@ export default async function PaginaVendedores({
   const categoria = texto(brutos, "categoria");
   const situacao = texto(brutos, "situacao");
 
-  const where: Prisma.VendedorWhereInput = {
+  // Os filtros valem sobre os documentos: basta um deles atender para a pessoa
+  // entrar na lista.
+  const filtroDocumento: Prisma.VendedorWhereInput = {
     ...(escopo.gerenciaId ? { gerenciaId: escopo.gerenciaId } : {}),
     ...(escopo.equipeId ? { equipeId: escopo.equipeId } : {}),
     ...(categoria ? { categoriaAtual: categoria as "INICIANTE" } : {}),
@@ -67,26 +77,34 @@ export default async function PaginaVendedores({
       : {}),
   };
 
-  const [vendedores, total, equipes, gerencias] = await Promise.all([
-    prisma.vendedor.findMany({
+  const where: Prisma.PessoaWhereInput = { documentos: { some: filtroDocumento } };
+
+  const [pessoas, total, semPessoa, equipes, gerencias] = await Promise.all([
+    prisma.pessoa.findMany({
       where,
       select: {
         id: true,
         nome: true,
-        cpfCnpj: true,
-        categoriaAtual: true,
-        situacao: true,
-        dataEntradaWr: true,
-        equipe: { select: { nome: true } },
-        gerencia: { select: { nome: true } },
-        pessoa: { select: { _count: { select: { documentos: true } } } },
-        _count: { select: { cotasEfetivas: true } },
+        documentos: {
+          select: {
+            id: true,
+            cpfCnpj: true,
+            categoriaAtual: true,
+            situacao: true,
+            dataEntradaWr: true,
+            equipe: { select: { nome: true } },
+            gerencia: { select: { nome: true } },
+            _count: { select: { cotasEfetivas: true } },
+          },
+        },
       },
       orderBy: { nome: "asc" },
       skip: (pagina - 1) * POR_PAGINA,
       take: POR_PAGINA,
     }),
-    prisma.vendedor.count({ where }),
+    prisma.pessoa.count({ where }),
+    // Nenhum cadastro pode desaparecer da lista por falta de pessoa.
+    prisma.vendedor.count({ where: { pessoaId: null } }),
     prisma.equipe.findMany({
       where: { status: "ATIVO" },
       select: { id: true, nome: true, gerencia: { select: { id: true, nome: true } } },
@@ -99,14 +117,50 @@ export default async function PaginaVendedores({
     }),
   ]);
 
+  const linhas = pessoas.map((pessoa) => {
+    // O documento com mais vendas responde pela pessoa nas colunas de resumo.
+    const documentos = [...pessoa.documentos].sort(
+      (a, b) => b._count.cotasEfetivas - a._count.cotasEfetivas,
+    );
+    const principal = documentos[0];
+
+    const entradas = documentos
+      .map((documento) => documento.dataEntradaWr)
+      .filter((data): data is Date => data !== null)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    return {
+      id: pessoa.id,
+      nome: pessoa.nome,
+      href: `/vendedores/${principal?.id ?? ""}`,
+      documentos,
+      categoriaAtual: principal?.categoriaAtual ?? "INICIANTE",
+      equipeNome: documentos.find((item) => item.equipe)?.equipe?.nome ?? null,
+      gerenciaNome: documentos.find((item) => item.gerencia)?.gerencia?.nome ?? null,
+      entradaWr: entradas[0] ?? null,
+      cotas: documentos.reduce((soma, item) => soma + item._count.cotasEfetivas, 0),
+      // Ativo em qualquer documento é ativo: desligado é quem não opera por nenhum.
+      situacao: documentos.some((item) => item.situacao === "ATIVO")
+        ? "ATIVO"
+        : (principal?.situacao ?? "ATIVO"),
+    };
+  });
+
   const podeCriar = podeAcessar(sessao.perfil, "vendedores", "criar");
 
   return (
     <>
       <CabecalhoPagina
         titulo="Vendedores"
-        descricao="Cadastro, categoria e histórico. A categoria vigente na data de cada venda é o que define o cálculo — mudanças não afetam vendas passadas."
+        descricao="Uma linha por pessoa, somando os documentos dela. A categoria vigente na data de cada venda é o que define o cálculo — mudanças não afetam vendas passadas."
       />
+
+      {semPessoa > 0 ? (
+        <Aviso tom="atencao">
+          {formatarNumero(semPessoa)} cadastro(s) ainda não pertencem a nenhuma pessoa e por isso
+          não aparecem aqui. Abra <strong>Vínculos de vendedores</strong> para resolver.
+        </Aviso>
+      ) : null}
 
       {podeCriar ? (
         <Card>
@@ -170,42 +224,42 @@ export default async function PaginaVendedores({
               </tr>
             </Cabecalho>
             <tbody>
-              {vendedores.length === 0 ? (
+              {linhas.length === 0 ? (
                 <TabelaVazia colunas={8} mensagem="Nenhum vendedor encontrado." />
               ) : (
-                vendedores.map((vendedor) => (
-                  <Tr key={vendedor.id}>
+                linhas.map((linha) => (
+                  <Tr key={linha.id}>
                     <Td className="font-medium">
                       <Link
-                        href={`/vendedores/${vendedor.id}`}
+                        href={linha.href}
                         className="text-[var(--color-marca-forte)] hover:underline"
                       >
-                        {vendedor.nome}
+                        {linha.nome}
                       </Link>
                     </Td>
                     <Td className="numerico whitespace-nowrap">
-                      {formatarDocumento(vendedor.cpfCnpj)}
+                      <div className="flex flex-col gap-0.5">
+                        {linha.documentos.map((documento) => (
+                          <span key={documento.id}>{formatarDocumento(documento.cpfCnpj)}</span>
+                        ))}
+                      </div>
                     </Td>
                     <Td>
-                      <Badge tom={TOM_CATEGORIA[vendedor.categoriaAtual]}>
-                        {vendedor.categoriaAtual}
+                      <Badge tom={TOM_CATEGORIA[linha.categoriaAtual]}>
+                        {linha.categoriaAtual}
                       </Badge>
                     </Td>
-                    <Td>{vendedor.equipe?.nome ?? "—"}</Td>
-                    <Td>{vendedor.gerencia?.nome ?? "—"}</Td>
-                    <Td className="whitespace-nowrap">{formatarData(vendedor.dataEntradaWr)}</Td>
-                    <Td className="numerico text-right">
-                      {formatarNumero(vendedor._count.cotasEfetivas)}
-                    </Td>
+                    <Td>{linha.equipeNome ?? "—"}</Td>
+                    <Td>{linha.gerenciaNome ?? "—"}</Td>
+                    <Td className="whitespace-nowrap">{formatarData(linha.entradaWr)}</Td>
+                    <Td className="numerico text-right">{formatarNumero(linha.cotas)}</Td>
                     <Td>
                       <div className="flex flex-wrap gap-1">
-                        <Badge tom={vendedor.situacao === "ATIVO" ? "bom" : "neutro"}>
-                          {vendedor.situacao}
+                        <Badge tom={linha.situacao === "ATIVO" ? "bom" : "neutro"}>
+                          {linha.situacao}
                         </Badge>
-                        {(vendedor.pessoa?._count.documentos ?? 1) > 1 ? (
-                          <Badge tom="marca">
-                            {vendedor.pessoa?._count.documentos} documentos
-                          </Badge>
+                        {linha.documentos.length > 1 ? (
+                          <Badge tom="marca">{linha.documentos.length} documentos</Badge>
                         ) : null}
                       </div>
                     </Td>
