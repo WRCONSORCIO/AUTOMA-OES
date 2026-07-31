@@ -6,7 +6,7 @@ import { formatarDocumento, normalizarTexto } from "@/lib/normalize";
 import { formatarNumero } from "@/lib/format";
 import { Badge, Botao, Campo, Entrada, Selecao } from "@/components/ui";
 import { BotaoAcao, MensagemAcao, type EstadoAcao } from "@/components/formulario-acao";
-import { acaoSeparar, acaoVincular } from "./acoes";
+import { acaoSeparar, acaoVincular, acaoVincularEmLote } from "./acoes";
 
 interface Documento {
   vendedorId: string;
@@ -20,12 +20,72 @@ interface Documento {
   cotas: number;
 }
 
+const ROTULO_CONFIANCA = {
+  CERTO: "Certo",
+  ALTA: "Alta confiança",
+  MEDIA: "Confiança média",
+  BAIXA: "Confiança baixa",
+} as const;
+
+const TOM_CONFIANCA = {
+  CERTO: "bom",
+  ALTA: "bom",
+  MEDIA: "atencao",
+  BAIXA: "neutro",
+} as const;
+
+type Confianca = keyof typeof ROTULO_CONFIANCA;
+
 function Etiqueta({ tipo }: { tipo: string }) {
   return <Badge tom={tipo === "CPF" ? "marca" : "neutro"}>{tipo}</Badge>;
 }
 
-/** Sugestão automática: mesmos nomes em pessoas diferentes. */
-export function CartaoSugestao({ documentos }: { documentos: Documento[] }) {
+/**
+ * Aplica todas as sugestões de uma vez, até o nível de confiança escolhido.
+ * O padrão para no "alta": o que é duvidoso continua exigindo conferência.
+ */
+export function VincularTudo({
+  totais,
+}: {
+  totais: Record<Confianca, number>;
+}) {
+  const [estado, despachar] = useActionState<EstadoAcao, FormData>(acaoVincularEmLote, {});
+
+  const certoEAlta = totais.CERTO + totais.ALTA;
+
+  return (
+    <form action={despachar} className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <Campo rotulo="Aplicar sugestões até" className="min-w-72 flex-1">
+          <Selecao name="ate" defaultValue="ALTA">
+            <option value="CERTO">Só as certas — {totais.CERTO} sugestão(ões)</option>
+            <option value="ALTA">Certas e de alta confiança — {certoEAlta}</option>
+            <option value="MEDIA">Até confiança média — {certoEAlta + totais.MEDIA}</option>
+            <option value="BAIXA">
+              Tudo, inclusive confiança baixa — {certoEAlta + totais.MEDIA + totais.BAIXA}
+            </option>
+          </Selecao>
+        </Campo>
+        <BotaoAcao>
+          <Link2 className="h-4 w-4" />
+          Vincular em lote
+        </BotaoAcao>
+      </div>
+      <MensagemAcao estado={estado} />
+    </form>
+  );
+}
+
+/** Sugestão automática: cadastros reconhecidos como a mesma pessoa. */
+export function CartaoSugestao({
+  documentos,
+  confianca,
+  motivos,
+}: {
+  documentos: Documento[];
+  confianca: Confianca;
+  motivos: string[];
+}) {
   const [estado, despachar] = useActionState<EstadoAcao, FormData>(acaoVincular, {});
   const [selecionados, setSelecionados] = useState<string[]>(
     documentos.map((documento) => documento.vendedorId),
@@ -42,7 +102,11 @@ export function CartaoSugestao({ documentos }: { documentos: Documento[] }) {
       action={despachar}
       className="rounded-[var(--radius-card)] border border-[var(--color-borda)] bg-[var(--color-superficie-2)] p-4"
     >
-      <p className="mb-3 font-medium">{documentos[0]?.nome}</p>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <p className="font-medium">{documentos[0]?.nome}</p>
+        <Badge tom={TOM_CONFIANCA[confianca]}>{ROTULO_CONFIANCA[confianca]}</Badge>
+      </div>
+      <p className="mb-3 text-sm text-[var(--color-texto-2)]">{motivos.join(" · ")}</p>
       <MensagemAcao estado={estado} />
 
       <div className="mt-3 flex flex-col gap-2">
