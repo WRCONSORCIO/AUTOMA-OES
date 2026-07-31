@@ -11,11 +11,6 @@ import {
   resolverVendedorEfetivo,
 } from "@/server/domain/regras";
 import {
-  carregarTabelasWr,
-  resolverTabelaWr,
-  type TabelaWr,
-} from "@/server/services/tabelas";
-import {
   CacheVendedores,
   garantirVendedorPorDocumento,
   type ContextoUsuario,
@@ -99,7 +94,6 @@ export async function importarComissaoPdf(
       });
     }
 
-    const tabelas = await carregarTabelasWr();
     const cache = new CacheVendedores(prisma);
 
     for (let inicio = 0; inicio < leitura.registros.length; inicio += TAMANHO_LOTE) {
@@ -112,7 +106,6 @@ export async function importarComissaoPdf(
             importacaoId: importacao.id,
             administradoraId: entrada.administradoraId,
             hashArquivo,
-            tabelas,
             cache,
           });
 
@@ -219,7 +212,6 @@ interface EntradaGravacao {
   importacaoId: string;
   administradoraId: string;
   hashArquivo: string;
-  tabelas: TabelaWr[];
   cache: CacheVendedores;
 }
 
@@ -304,24 +296,15 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
   const dataReferencia =
     registro.dataPagamento ?? registro.dataContabil ?? registro.dataVenda ?? new Date();
 
-  // Imóvel e automóvel têm tabelas próprias; sem tabela do segmento, vale a geral.
-  const segmento =
-    normalizarSegmento(registro.objeto) ?? cota?.segmentoVenda ?? null;
+  const segmento = normalizarSegmento(registro.objeto) ?? cota?.segmentoVenda ?? null;
 
-  // A tabela é a vigente na data da venda, não a de hoje.
-  const tabela = resolverTabelaWr(
-    entrada.tabelas,
-    categoria,
-    segmento,
-    registro.dataVenda ?? cota?.dataVenda ?? dataReferencia,
-  );
-
+  // O valor é o que a administradora informou. A categoria do vendedor não
+  // entra: ela decide o repasse, que é apurado separadamente.
   const calculo = calcularComissaoWr({
-    categoria,
-    parcela: registro.parcela,
+    valorComissao: registro.valorComissao,
+    percentualRelatorio: registro.percentualComissao,
     valorCredito: registro.valorCredito,
     percentualFlex: registro.percentualFlex,
-    faixas: tabela?.faixas ?? [],
     tipo: registro.tipo,
   });
 
@@ -383,7 +366,7 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
               percentual: new Prisma.Decimal(calculo.percentual.toFixed(4)),
               valor: new Prisma.Decimal(calculo.valor.toFixed(2)),
               regra: calculo.regra,
-              tabelaComissaoId: tabela?.id ?? null,
+      tabelaComissaoId: null,
               modalidadeFlexId: modalidadeFlex?.id ?? null,
             },
           }

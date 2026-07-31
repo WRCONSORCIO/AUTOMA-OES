@@ -86,7 +86,7 @@ export interface ResultadoLeituraPdf {
 
 type Faixa = readonly [number, number];
 
-interface ItemTexto {
+export interface ItemTexto {
   str: string;
   transform: number[];
   width: number;
@@ -192,7 +192,7 @@ interface LinhaDocumento {
   texto: string;
 }
 
-async function extrairLinhas(
+export async function extrairLinhas(
   arquivo: Buffer,
 ): Promise<{ linhas: LinhaDocumento[]; brutas: LinhaDocumento[]; paginas: number }> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");

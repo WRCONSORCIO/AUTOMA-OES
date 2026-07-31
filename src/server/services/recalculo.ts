@@ -3,7 +3,6 @@ import "server-only";
 import { Prisma, type CategoriaVendedor } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calcularComissaoWr } from "@/server/domain/regras";
-import { carregarTabelasWr, resolverTabelaWr } from "./tabelas";
 import { registrarAuditoria } from "./auditoria";
 import { apurarComissoesEquipe } from "./comissao-equipe";
 import { CacheVendedores, type ContextoUsuario } from "./vendedores";
@@ -168,7 +167,6 @@ async function recalcularLancamentos(
   cache: CacheVendedores,
   resumo: ResumoRecalculo,
 ): Promise<void> {
-  const tabelas = await carregarTabelasWr();
   let cursor: string | undefined;
 
   for (;;) {
@@ -179,6 +177,8 @@ async function recalcularLancamentos(
         tipo: true,
         valorCredito: true,
         percentualFlex: true,
+        valorComissao: true,
+        percentualComissao: true,
         categoriaVenda: true,
         emRecuperacao: true,
         segmentoVenda: true,
@@ -225,27 +225,19 @@ async function recalcularLancamentos(
 
       const segmento = lancamento.cotaRef?.segmentoVenda ?? lancamento.segmentoVenda;
 
-      // A tabela é a vigente na data da venda, não a de hoje: criar uma nova
-      // vigência não pode reescrever o que já foi vendido sob a anterior.
-      const tabela = resolverTabelaWr(
-        tabelas,
-        categoria,
-        segmento,
-        dataVenda ?? lancamento.dataReferencia,
-      );
-
       const calculo = calcularComissaoWr({
-        categoria,
-        parcela: lancamento.parcela,
+        valorComissao: Number(lancamento.valorComissao),
+        percentualRelatorio:
+          lancamento.percentualComissao === null
+            ? null
+            : Number(lancamento.percentualComissao),
         valorCredito: Number(lancamento.valorCredito),
         percentualFlex:
           lancamento.percentualFlex === null ? null : Number(lancamento.percentualFlex),
-        faixas: tabela?.faixas ?? [],
         tipo: lancamento.tipo,
       });
 
       const atual = lancamento.comissaoWr;
-      const tabelaId = calculo.aplicavel ? (tabela?.id ?? null) : null;
 
       // Não basta comparar o valor: cadastrar a tabela do segmento pode manter
       // o valor em zero (parcela fora da tabela) e ainda assim mudar a razão
@@ -256,8 +248,7 @@ async function recalcularLancamentos(
         segmento !== lancamento.segmentoVenda ||
         atual === null ||
         Number(atual.valor) !== calculo.valor ||
-        atual.regra !== calculo.regra ||
-        atual.tabelaComissaoId !== tabelaId;
+        atual.regra !== calculo.regra;
 
       if (!mudou) continue;
 
@@ -275,7 +266,7 @@ async function recalcularLancamentos(
           valor: new Prisma.Decimal(calculo.valor.toFixed(2)),
           regra: calculo.regra,
           observacao: calculo.observacao ?? null,
-          tabelaComissaoId: tabelaId,
+          tabelaComissaoId: null,
           calculadoEm: new Date(),
         };
 
