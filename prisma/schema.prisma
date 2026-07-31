@@ -82,6 +82,7 @@ enum OrigemVendedor {
 enum TipoImportacao {
   BASE_CSV
   COMISSAO_PDF
+  BONUS_PDF
 }
 
 enum StatusImportacao {
@@ -197,6 +198,7 @@ model Gerencia {
   cotas             Cota[]
   comissoes         ComissaoRegistro[]
   comissoesEquipe   ComissaoEquipe[]
+  bonus             BonusIncentivo[]
   alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@index([status])
@@ -220,6 +222,7 @@ model Equipe {
   cotas             Cota[]
   comissoes         ComissaoRegistro[]
   comissoesEquipe   ComissaoEquipe[]
+  bonus             BonusIncentivo[]
   alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@unique([gerenciaId, nome])
@@ -308,6 +311,7 @@ model Vendedor {
   overrides           CotaVendedorOverride[]
   overridesAnteriores CotaVendedorOverrideHistorico[] @relation("VendedorAnterior")
   overridesNovos      CotaVendedorOverrideHistorico[] @relation("VendedorNovo")
+  bonus                BonusIncentivo[]
   comissoes           ComissaoRegistro[]
 
   @@index([nome])
@@ -401,6 +405,7 @@ model Administradora {
   atualizadoEm DateTime       @updatedAt
 
   cotas       Cota[]
+  bonus          BonusIncentivo[]
   comissoes   ComissaoRegistro[]
   importacoes Importacao[]
 
@@ -505,6 +510,7 @@ model Cota {
   overrideHistorico CotaVendedorOverrideHistorico[]
   comissoes         ComissaoRegistro[]
   comissoesEquipe   ComissaoEquipe[]
+  bonus             BonusIncentivo[]
   estorno           Estorno?
 
   @@unique([administradoraId, contrato, grupo, cota, cpfCnpjCliente], name: "identidadeCota")
@@ -674,6 +680,57 @@ model ComissaoRegistro {
 }
 
 /// Comissão calculada pela WR sobre o registro do relatório.
+/// Bônus de incentivo que a administradora paga à WR.
+///
+/// Não é repassado a vendedor, equipe nem gerência. O relatório não traz
+/// vendedor: a atribuição sai do cruzamento com a cota, e é o que permite
+/// saber de qual gerência veio cada real.
+model BonusIncentivo {
+  id               String @id @default(cuid())
+  importacaoId     String
+  administradoraId String
+
+  grupo           String
+  cota            String
+  contrato        String
+  nomeConsorciado String
+  tipoPessoa      String?
+  parcela         Int?
+  dataInclusao    DateTime? @db.Date
+
+  valorEvento         Decimal  @db.Decimal(18, 2)
+  percentualIncentivo Decimal? @db.Decimal(9, 4)
+  valorIncentivo      Decimal  @db.Decimal(18, 2)
+  percentualFlex      Decimal? @db.Decimal(9, 4)
+  segmento            SegmentoVenda?
+
+  periodoInicio DateTime? @db.Date
+  periodoFim    DateTime? @db.Date
+
+  /// Rateio: a cota encontrada na base e a unidade que responde por ela.
+  cotaId     String?
+  vendedorId String?
+  equipeId   String?
+  gerenciaId String?
+
+  hashRegistro String @unique
+  paginaPdf    Int?
+  criadoEm     DateTime @default(now())
+
+  importacao     Importacao     @relation(fields: [importacaoId], references: [id])
+  administradora Administradora @relation(fields: [administradoraId], references: [id])
+  cotaRef        Cota?          @relation(fields: [cotaId], references: [id])
+  vendedor       Vendedor?      @relation(fields: [vendedorId], references: [id])
+  equipe         Equipe?        @relation(fields: [equipeId], references: [id])
+  gerencia       Gerencia?      @relation(fields: [gerenciaId], references: [id])
+
+  @@index([gerenciaId])
+  @@index([equipeId])
+  @@index([periodoInicio, periodoFim])
+  @@index([grupo, cota])
+  @@index([importacaoId])
+}
+
 model ComissaoWr {
   id                 String             @id @default(cuid())
   comissaoRegistroId String             @unique
@@ -849,6 +906,7 @@ model Importacao {
 
   administradora Administradora? @relation(fields: [administradoraId], references: [id])
   usuario        Usuario?        @relation(fields: [usuarioId], references: [id])
+  bonus            BonusIncentivo[]
 
   erros     ImportacaoErro[]
   versoes   CotaVersao[]

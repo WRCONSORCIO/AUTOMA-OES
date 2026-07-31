@@ -5,6 +5,7 @@ import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { importarBaseCsv } from "@/server/importacao/importar-base";
 import { importarComissaoPdf } from "@/server/importacao/importar-comissao";
+import { importarBonusPdf } from "@/server/importacao/importar-bonus";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -67,6 +68,16 @@ export async function POST(requisicao: Request) {
 
     if (tipo === "COMISSAO_PDF") {
       const resumo = await importarComissaoPdf({
+        arquivo: conteudo,
+        nomeArquivo: arquivo.name,
+        administradoraId,
+        usuario,
+      });
+      return NextResponse.json({ tipo, resumo });
+    }
+
+    if (tipo === "BONUS_PDF") {
+      const resumo = await importarBonusPdf({
         arquivo: conteudo,
         nomeArquivo: arquivo.name,
         administradoraId,

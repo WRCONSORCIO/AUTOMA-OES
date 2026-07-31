@@ -32,9 +32,22 @@ interface ResumoComissao {
   divergenciaLeitura: number | null;
 }
 
+interface ResumoBonus {
+  totalRegistros: number;
+  criados: number;
+  duplicados: number;
+  erros: number;
+  semCotaVinculada: number;
+  semGerencia: number;
+  valorTotal: number;
+  totalRelatorio: number | null;
+  divergenciaLeitura: number | null;
+}
+
 type Resposta =
   | { tipo: "BASE_CSV"; resumo: ResumoBase }
-  | { tipo: "COMISSAO_PDF"; resumo: ResumoComissao };
+  | { tipo: "COMISSAO_PDF"; resumo: ResumoComissao }
+  | { tipo: "BONUS_PDF"; resumo: ResumoBonus };
 
 export function EnviarArquivo({
   administradoras,
@@ -101,7 +114,8 @@ export function EnviarArquivo({
             <Campo rotulo="Tipo de arquivo">
               <Selecao name="tipo" value={tipo} onChange={(e) => setTipo(e.target.value)}>
                 <option value="BASE_CSV">Base de clientes (CSV)</option>
-                <option value="COMISSAO_PDF">Relatório de comissão (PDF)</option>
+                <option value="COMISSAO_PDF">Comissão que a WR recebe (PDF)</option>
+                <option value="BONUS_PDF">Bônus de incentivo da WR (PDF)</option>
               </Selecao>
             </Campo>
 
@@ -150,6 +164,7 @@ export function EnviarArquivo({
           {resposta?.tipo === "COMISSAO_PDF" ? (
             <ResumoDaComissao resumo={resposta.resumo} />
           ) : null}
+          {resposta?.tipo === "BONUS_PDF" ? <ResumoDoBonus resumo={resposta.resumo} /> : null}
         </form>
       </CardContent>
     </Card>
@@ -258,6 +273,52 @@ function Item({
     <div>
       <dt className="text-xs text-[var(--color-texto-3)]">{rotulo}</dt>
       <dd className={`numerico text-lg font-semibold ${cor}`}>{valor}</dd>
+    </div>
+  );
+}
+
+function ResumoDoBonus({ resumo }: { resumo: ResumoBonus }) {
+  const divergente = resumo.divergenciaLeitura !== null && resumo.divergenciaLeitura !== 0;
+
+  return (
+    <div className="rounded-lg border border-[var(--color-borda)] bg-[var(--color-superficie-3)] p-4">
+      <p className="mb-3 text-sm font-medium">Resumo do bônus</p>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        <Item rotulo="Linhas gravadas" valor={formatarNumero(resumo.criados)} destaque="bom" />
+        <Item rotulo="Já existentes" valor={formatarNumero(resumo.duplicados)} />
+        <Item
+          rotulo="Erros"
+          valor={formatarNumero(resumo.erros)}
+          destaque={resumo.erros > 0 ? "critico" : undefined}
+        />
+        <Item rotulo="Total do bônus" valor={formatarMoeda(resumo.valorTotal)} destaque="bom" />
+        <Item
+          rotulo="Impresso no relatório"
+          valor={resumo.totalRelatorio === null ? "—" : formatarMoeda(resumo.totalRelatorio)}
+        />
+        <Item
+          rotulo="Divergência de leitura"
+          valor={resumo.divergenciaLeitura === null ? "—" : formatarMoeda(resumo.divergenciaLeitura)}
+          destaque={divergente ? "critico" : "bom"}
+        />
+        <Item
+          rotulo="Sem cota na base"
+          valor={formatarNumero(resumo.semCotaVinculada)}
+          destaque={resumo.semCotaVinculada > 0 ? "atencao" : undefined}
+        />
+        <Item
+          rotulo="Sem gerência"
+          valor={formatarNumero(resumo.semGerencia)}
+          destaque={resumo.semGerencia > 0 ? "atencao" : undefined}
+        />
+      </dl>
+      {resumo.semGerencia > 0 ? (
+        <p className="mt-3 text-sm text-[var(--color-texto-2)]">
+          As linhas sem gerência entram no total assim mesmo — o valor é da WR de qualquer forma.
+          Elas aparecem separadas no rateio, e passam a ser atribuídas assim que a cota
+          correspondente estiver na base.
+        </p>
+      ) : null}
     </div>
   );
 }
