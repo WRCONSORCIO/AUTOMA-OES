@@ -2,7 +2,10 @@ import "server-only";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { normalizarTexto } from "@/lib/normalize";
+import {
+  agruparSugestoes,
+  type Confianca,
+} from "@/server/domain/vinculo-nomes";
 import { registrarAuditoria } from "./auditoria";
 import type { ContextoUsuario } from "./vendedores";
 
@@ -104,7 +107,8 @@ export interface DocumentoSugerido {
 
 export interface SugestaoVinculo {
   chave: string;
-  nomeNormalizado: string;
+  confianca: Confianca;
+  motivos: string[];
   documentos: DocumentoSugerido[];
 }
 
@@ -115,8 +119,14 @@ function tipoDocumento(cpfCnpj: string): "CPF" | "CNPJ" | "OUTRO" {
 }
 
 /**
- * Agrupa por nome normalizado os cadastros que hoje estão em pessoas
- * diferentes. A sugestão nunca vincula sozinha — quem confirma é o usuário.
+ * Sugere quais cadastros são a mesma pessoa.
+ *
+ * Varre TODOS os cadastros, inclusive os que estão pendentes de cadastro — o
+ * vendedor criado pela importação é justamente o que mais precisa ser
+ * reconhecido, porque nasce sem categoria e sem equipe.
+ *
+ * O reconhecimento de nomes está em `domain/vinculo-nomes`. Aqui só se junta o
+ * resultado com os dados do cadastro. A sugestão nunca vincula sozinha.
  */
 export async function sugerirVinculos(): Promise<SugestaoVinculo[]> {
   const vendedores = await prisma.vendedor.findMany({
@@ -133,28 +143,27 @@ export async function sugerirVinculos(): Promise<SugestaoVinculo[]> {
     orderBy: { nome: "asc" },
   });
 
-  const porNome = new Map<string, typeof vendedores>();
-  for (const vendedor of vendedores) {
-    const chave = normalizarTexto(vendedor.nome);
-    if (!chave) continue;
-    const grupo = porNome.get(chave);
-    if (grupo) grupo.push(vendedor);
-    else porNome.set(chave, [vendedor]);
-  }
+  const porId = new Map(vendedores.map((vendedor) => [vendedor.id, vendedor]));
 
-  const sugestoes: SugestaoVinculo[] = [];
+  const grupos = agruparSugestoes(
+    vendedores.map((vendedor) => ({
+      id: vendedor.id,
+      nome: vendedor.nome,
+      cpfCnpj: vendedor.cpfCnpj,
+      pessoaId: vendedor.pessoaId,
+    })),
+  );
 
-  for (const [chave, grupo] of porNome) {
-    if (grupo.length < 2) continue;
-
-    // Já estão todos na mesma pessoa: não há o que sugerir.
-    const pessoas = new Set(grupo.map((item) => item.pessoaId));
-    if (pessoas.size < 2) continue;
-
-    sugestoes.push({
-      chave,
-      nomeNormalizado: chave,
-      documentos: grupo.map((item) => ({
+  return grupos.map((grupo) => ({
+    chave: grupo.chave,
+    confianca: grupo.confianca,
+    motivos: grupo.motivos,
+    documentos: grupo.vendedorIds
+      .map((id) => porId.get(id))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      // CPF primeiro: é por onde o vendedor começou e onde mora o histórico.
+      .sort((a, b) => a.cpfCnpj.length - b.cpfCnpj.length || a.nome.localeCompare(b.nome))
+      .map((item) => ({
         vendedorId: item.id,
         pessoaId: item.pessoaId ?? "",
         nome: item.nome,
@@ -165,10 +174,64 @@ export async function sugerirVinculos(): Promise<SugestaoVinculo[]> {
         gerenciaNome: item.gerencia?.nome ?? null,
         cotas: item._count.cotasEfetivas,
       })),
-    });
+  }));
+}
+
+export interface ResultadoVinculoEmLote {
+  gruposVinculados: number;
+  documentosVinculados: number;
+  gruposIgnorados: number;
+}
+
+/**
+ * Aplica de uma vez as sugestões cuja confiança dispensa conferência caso a caso.
+ *
+ * Existe porque conferir centenas de cadastros um a um é inviável. Nada aqui é
+ * irreversível: cada vínculo entra no histórico da pessoa e pode ser desfeito
+ * pela tela, documento por documento.
+ */
+export async function vincularSugestoesEmLote(
+  entrada: { confiancas: Confianca[]; motivo: string },
+  usuario: ContextoUsuario,
+): Promise<ResultadoVinculoEmLote> {
+  const aceitas = new Set(entrada.confiancas);
+  const sugestoes = await sugerirVinculos();
+
+  const resultado: ResultadoVinculoEmLote = {
+    gruposVinculados: 0,
+    documentosVinculados: 0,
+    gruposIgnorados: 0,
+  };
+
+  for (const sugestao of sugestoes) {
+    if (!aceitas.has(sugestao.confianca)) {
+      resultado.gruposIgnorados += 1;
+      continue;
+    }
+
+    // Destino: o CPF com mais vendas — onde o histórico da pessoa costuma estar.
+    const destino = [...sugestao.documentos].sort(
+      (a, b) => a.cpfCnpj.length - b.cpfCnpj.length || b.cotas - a.cotas,
+    )[0];
+    if (!destino?.pessoaId) {
+      resultado.gruposIgnorados += 1;
+      continue;
+    }
+
+    const vinculo = await vincularDocumentos(
+      {
+        vendedorIds: sugestao.documentos.map((documento) => documento.vendedorId),
+        pessoaDestinoId: destino.pessoaId,
+        motivo: `${entrada.motivo} — ${sugestao.motivos.join("; ")}`,
+      },
+      usuario,
+    );
+
+    resultado.gruposVinculados += 1;
+    resultado.documentosVinculados += vinculo.documentosVinculados;
   }
 
-  return sugestoes.sort((a, b) => b.documentos.length - a.documentos.length);
+  return resultado;
 }
 
 // ---------------------------------------------------------------------------

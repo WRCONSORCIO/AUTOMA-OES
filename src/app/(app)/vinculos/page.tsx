@@ -13,7 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui";
 import { Indicador } from "@/components/indicador";
-import { CartaoSugestao, VinculoManual } from "./formularios";
+import { CartaoSugestao, VincularTudo, VinculoManual } from "./formularios";
 
 export const metadata: Metadata = { title: "Vínculos de vendedores" };
 
@@ -47,6 +47,9 @@ export default async function PaginaVinculos() {
 
   const comMaisDeUm = opcoes.filter((opcao) => opcao.documentosNaPessoa > 1).length;
 
+  const totais = { CERTO: 0, ALTA: 0, MEDIA: 0, BAIXA: 0 };
+  for (const sugestao of sugestoes) totais[sugestao.confianca] += 1;
+
   return (
     <>
       <CabecalhoPagina
@@ -78,10 +81,12 @@ export default async function PaginaVinculos() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Sugestões por nome</CardTitle>
+          <CardTitle>Sugestões automáticas</CardTitle>
           <p className="text-sm text-[var(--color-texto-2)]">
-            Cadastros com o mesmo nome que ainda estão em pessoas diferentes. Confira antes de
-            confirmar — nada é vinculado sozinho.
+            Todos os cadastros são varridos, inclusive os que aparecem em Pendências. A razão
+            social do CNPJ raramente repete o nome do CPF — ganha sufixo, abrevia um sobrenome ou
+            carrega o próprio CPF do dono, e cada caso desses é reconhecido aqui com o motivo à
+            vista.
           </p>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -89,14 +94,32 @@ export default async function PaginaVinculos() {
             <div className="flex flex-col items-center gap-2 py-8 text-center">
               <CircleCheckBig className="h-8 w-8 text-[var(--color-bom)]" />
               <p className="text-sm text-[var(--color-texto-2)]">
-                Nenhuma sugestão pendente. Cadastros com nomes diferentes precisam do vínculo
-                manual abaixo.
+                Nenhuma sugestão pendente. Cadastros que o sistema não consegue relacionar sozinho
+                precisam do vínculo manual abaixo.
               </p>
             </div>
           ) : (
-            sugestoes.map((sugestao) => (
-              <CartaoSugestao key={sugestao.chave} documentos={sugestao.documentos} />
-            ))
+            <>
+              <div className="rounded-lg border border-[var(--color-borda-forte)] bg-[var(--color-superficie-3)] p-4">
+                <p className="mb-1 text-sm font-medium">
+                  {formatarNumero(sugestoes.length)} sugestão(ões) — aplique de uma vez
+                </p>
+                <p className="mb-3 text-sm text-[var(--color-texto-2)]">
+                  Cada vínculo fica registrado na auditoria e pode ser desfeito depois, cadastro
+                  por cadastro, na ficha do vendedor.
+                </p>
+                <VincularTudo totais={totais} />
+              </div>
+
+              {sugestoes.map((sugestao) => (
+                <CartaoSugestao
+                  key={sugestao.chave}
+                  documentos={sugestao.documentos}
+                  confianca={sugestao.confianca}
+                  motivos={sugestao.motivos}
+                />
+              ))}
+            </>
           )}
         </CardContent>
       </Card>
