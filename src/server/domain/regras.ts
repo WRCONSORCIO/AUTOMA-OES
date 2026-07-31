@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CategoriaVendedor, TipoLancamentoComissao } from "@prisma/client";
+import type { CategoriaVendedor, SegmentoVenda, TipoLancamentoComissao } from "@prisma/client";
 import {
   normalizarContrato,
   normalizarCota,
@@ -185,6 +185,37 @@ export function calcularBaseComissao(
       ? 100
       : percentualFlex;
   return arredondar2((valorCredito * percentual) / 100);
+}
+
+// ---------------------------------------------------------------------------
+// REGRA: segmento do bem
+// ---------------------------------------------------------------------------
+
+/**
+ * Segmento do bem a partir do texto que a administradora manda.
+ *
+ * A base traz `IMOVEL` / `MOVEL` na coluna de segmento; o relatório de comissão
+ * traz o produto por extenso, "CREDITO P/IMOVEL 015" ou "CREDITO P/MOVEL 21".
+ * O que a WR chama de automóvel é o que a administradora chama de móvel.
+ *
+ * Texto que não corresponda a nenhum dos dois devolve nulo: melhor cair na
+ * tabela geral do que classificar errado.
+ */
+export function normalizarSegmento(
+  valor: string | null | undefined,
+): SegmentoVenda | null {
+  if (!valor) return null;
+
+  const texto = valor
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase();
+
+  // A ordem importa: "IMOVEL" contém "MOVEL".
+  if (/\bI\s*MOVEL|P\/\s*IMOVEL|IMOVEL|IMOBILIARI/.test(texto)) return "IMOVEL";
+  if (/\bMOVEL|P\/\s*MOVEL|AUTOMOVEL|AUTO\b|VEICULO/.test(texto)) return "AUTOMOVEL";
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

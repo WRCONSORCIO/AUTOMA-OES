@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
-import { Power } from "lucide-react";
-import { Campo, Entrada, Selecao } from "@/components/ui";
+import { useActionState, useState } from "react";
+import { Pencil, Power, Trash2 } from "lucide-react";
+import { Botao, Campo, Entrada, Selecao } from "@/components/ui";
 import {
   BotaoAcao,
   FormularioAcao,
@@ -15,7 +15,23 @@ import {
   acaoCriarModalidadeFlex,
   acaoCriarTabela,
   acaoCriarTabelaEquipe,
+  acaoEditarTabela,
+  acaoRemoverTabela,
+  acaoRemoverTabelaEquipe,
 } from "./acoes";
+
+/** Vazio = vale para todos os segmentos. */
+function CampoSegmento({ valor }: { valor?: string | null }) {
+  return (
+    <Campo rotulo="Segmento" dica="Deixe em Todos quando a comissão não muda por produto.">
+      <Selecao name="segmento" defaultValue={valor ?? ""}>
+        <option value="">Todos os segmentos</option>
+        <option value="IMOVEL">Imóvel</option>
+        <option value="AUTOMOVEL">Automóvel</option>
+      </Selecao>
+    </Campo>
+  );
+}
 
 const PARCELAS = Array.from({ length: 12 }, (_, indice) => indice + 1);
 
@@ -42,9 +58,9 @@ export function FormularioTabela() {
 
   return (
     <FormularioAcao acao={acaoCriarTabela} rotuloBotao="Criar tabela">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Campo rotulo="Nome da tabela">
-          <Entrada name="nome" required minLength={2} placeholder="Ex.: Iniciante 2026" />
+          <Entrada name="nome" required minLength={2} placeholder="Ex.: Expert imóvel 2026" />
         </Campo>
         <Campo rotulo="Categoria">
           <Selecao name="categoria" defaultValue="INICIANTE">
@@ -53,6 +69,7 @@ export function FormularioTabela() {
             <option value="EXPERT">Expert</option>
           </Selecao>
         </Campo>
+        <CampoSegmento />
         <Campo rotulo="Vigente a partir de">
           <Entrada type="date" name="vigenteDe" defaultValue={hoje} required />
         </Campo>
@@ -85,7 +102,7 @@ export function FormularioTabelaEquipe() {
 
   return (
     <FormularioAcao acao={acaoCriarTabelaEquipe} rotuloBotao="Criar tabela e apurar">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Campo rotulo="Nome da tabela">
           <Entrada name="nome" required minLength={2} placeholder="Ex.: Equipe Veterano 2026" />
         </Campo>
@@ -96,6 +113,7 @@ export function FormularioTabelaEquipe() {
             <option value="EXPERT">Expert</option>
           </Selecao>
         </Campo>
+        <CampoSegmento />
         <Campo rotulo="Vigente a partir de">
           <Entrada type="date" name="vigenteDe" defaultValue={hoje} required />
         </Campo>
@@ -193,6 +211,141 @@ export function BotaoAlternarFlex({ id, ativo }: { id: string; ativo: boolean })
         <Power className="h-3.5 w-3.5" />
         {ativo ? "Inativar" : "Reativar"}
       </BotaoAcao>
+      <MensagemAcao estado={estado} />
+    </form>
+  );
+}
+
+interface TabelaEditavel {
+  id: string;
+  nome: string;
+  segmento: string | null;
+  vigenteDe: string;
+  vigenteAte: string | null;
+  faixas: { parcela: number; percentual: string }[];
+}
+
+/**
+ * Corrige a tabela no lugar. Existe para o caso de ela ter sido cadastrada
+ * errada — quando o percentual muda de verdade a partir de uma data, o certo é
+ * criar uma vigência nova acima.
+ */
+export function EditarTabela({ tabela }: { tabela: TabelaEditavel }) {
+  const [aberto, setAberto] = useState(false);
+  const [estado, despachar] = useActionState<EstadoAcao, FormData>(acaoEditarTabela, {});
+
+  const porParcela = new Map(tabela.faixas.map((faixa) => [faixa.parcela, faixa.percentual]));
+
+  if (!aberto) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Botao variante="secundario" tamanho="pequeno" type="button" onClick={() => setAberto(true)}>
+          <Pencil className="h-3.5 w-3.5" />
+          Corrigir
+        </Botao>
+        <RemoverTabela id={tabela.id} nome={tabela.nome} />
+      </div>
+    );
+  }
+
+  return (
+    <form
+      action={despachar}
+      className="flex flex-col gap-3 rounded-lg border border-[var(--color-borda-forte)] bg-[var(--color-superficie-3)] p-3"
+    >
+      <input type="hidden" name="id" value={tabela.id} />
+
+      <p className="text-xs text-[var(--color-texto-2)]">
+        Corrigir reescreve a tabela e recalcula o que já foi apurado com ela. Para uma mudança
+        real de percentual a partir de uma data, crie uma tabela nova em vez de corrigir esta.
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Campo rotulo="Nome">
+          <Entrada name="nome" defaultValue={tabela.nome} required minLength={2} className="h-9 text-sm" />
+        </Campo>
+        <CampoSegmento valor={tabela.segmento} />
+        <Campo rotulo="Vigente de">
+          <Entrada type="date" name="vigenteDe" defaultValue={tabela.vigenteDe} required className="h-9 text-sm" />
+        </Campo>
+        <Campo rotulo="Vigente até" dica="Em branco = ainda vigente.">
+          <Entrada type="date" name="vigenteAte" defaultValue={tabela.vigenteAte ?? ""} className="h-9 text-sm" />
+        </Campo>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+        {PARCELAS.map((parcela) => (
+          <label key={parcela} className="flex flex-col gap-1 text-xs">
+            <span className="text-[var(--color-texto-3)]">Parcela {parcela}</span>
+            <Entrada
+              name={`percentual_${parcela}`}
+              inputMode="decimal"
+              placeholder="0,00"
+              defaultValue={porParcela.get(parcela) ?? ""}
+              className="h-9 text-sm"
+            />
+          </label>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <BotaoAcao>Salvar e recalcular</BotaoAcao>
+        <Botao variante="sutil" tamanho="pequeno" type="button" onClick={() => setAberto(false)}>
+          Cancelar
+        </Botao>
+        <MensagemAcao estado={estado} />
+      </div>
+    </form>
+  );
+}
+
+export function RemoverTabela({ id, nome }: { id: string; nome: string }) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [estado, despachar] = useActionState<EstadoAcao, FormData>(acaoRemoverTabela, {});
+
+  if (!confirmando) {
+    return (
+      <Botao variante="sutil" tamanho="pequeno" type="button" onClick={() => setConfirmando(true)}>
+        <Trash2 className="h-3.5 w-3.5" />
+        Excluir
+      </Botao>
+    );
+  }
+
+  return (
+    <form action={despachar} className="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="id" value={id} />
+      <span className="text-xs text-[var(--color-texto-2)]">Excluir “{nome}”?</span>
+      <BotaoAcao>Confirmar</BotaoAcao>
+      <Botao variante="sutil" tamanho="pequeno" type="button" onClick={() => setConfirmando(false)}>
+        Cancelar
+      </Botao>
+      <MensagemAcao estado={estado} />
+    </form>
+  );
+}
+
+export function RemoverTabelaEquipe({ id, nome }: { id: string; nome: string }) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [estado, despachar] = useActionState<EstadoAcao, FormData>(acaoRemoverTabelaEquipe, {});
+
+  if (!confirmando) {
+    return (
+      <Botao variante="sutil" tamanho="pequeno" type="button" onClick={() => setConfirmando(true)}>
+        <Trash2 className="h-3.5 w-3.5" />
+        Excluir
+      </Botao>
+    );
+  }
+
+  return (
+    <form action={despachar} className="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="id" value={id} />
+      <span className="text-xs text-[var(--color-texto-2)]">Excluir “{nome}”?</span>
+      <BotaoAcao>Confirmar</BotaoAcao>
+      <Botao variante="sutil" tamanho="pequeno" type="button" onClick={() => setConfirmando(false)}>
+        Cancelar
+      </Botao>
       <MensagemAcao estado={estado} />
     </form>
   );

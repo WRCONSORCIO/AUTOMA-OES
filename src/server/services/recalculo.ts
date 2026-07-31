@@ -2,7 +2,8 @@ import "server-only";
 
 import { Prisma, type CategoriaVendedor } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { calcularComissaoWr, type FaixaParcela } from "@/server/domain/regras";
+import { calcularComissaoWr } from "@/server/domain/regras";
+import { carregarTabelasWr, resolverTabelaWr } from "./tabelas";
 import { registrarAuditoria } from "./auditoria";
 import { apurarComissoesEquipe } from "./comissao-equipe";
 import { CacheVendedores, type ContextoUsuario } from "./vendedores";
@@ -167,7 +168,7 @@ async function recalcularLancamentos(
   cache: CacheVendedores,
   resumo: ResumoRecalculo,
 ): Promise<void> {
-  const tabelas = await carregarTabelas();
+  const tabelas = await carregarTabelasWr();
   let cursor: string | undefined;
 
   for (;;) {
@@ -180,12 +181,21 @@ async function recalcularLancamentos(
         percentualFlex: true,
         categoriaVenda: true,
         emRecuperacao: true,
+        segmentoVenda: true,
         dataVenda: true,
+        dataReferencia: true,
         vendedorId: true,
         cotaRef: {
-          select: { categoriaVenda: true, emRecuperacao: true, dataVenda: true },
+          select: {
+            categoriaVenda: true,
+            emRecuperacao: true,
+            dataVenda: true,
+            segmentoVenda: true,
+          },
         },
-        comissaoWr: { select: { id: true, valor: true } },
+        comissaoWr: {
+          select: { id: true, valor: true, regra: true, tabelaComissaoId: true },
+        },
       },
       orderBy: { id: "asc" },
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -213,7 +223,16 @@ async function recalcularLancamentos(
           (await cache.recuperacaoNaData(lancamento.vendedorId, dataVenda)) !== null;
       }
 
-      const tabela = categoria ? tabelas.get(categoria) : undefined;
+      const segmento = lancamento.cotaRef?.segmentoVenda ?? lancamento.segmentoVenda;
+
+      // A tabela é a vigente na data da venda, não a de hoje: criar uma nova
+      // vigência não pode reescrever o que já foi vendido sob a anterior.
+      const tabela = resolverTabelaWr(
+        tabelas,
+        categoria,
+        segmento,
+        dataVenda ?? lancamento.dataReferencia,
+      );
 
       const calculo = calcularComissaoWr({
         categoria,
@@ -225,17 +244,27 @@ async function recalcularLancamentos(
         tipo: lancamento.tipo,
       });
 
-      const valorAtual = lancamento.comissaoWr ? Number(lancamento.comissaoWr.valor) : null;
-      const mudouCategoria = categoria !== lancamento.categoriaVenda;
-      const mudouRecuperacao = emRecuperacao !== lancamento.emRecuperacao;
-      const mudouValor = valorAtual !== calculo.valor;
+      const atual = lancamento.comissaoWr;
+      const tabelaId = calculo.aplicavel ? (tabela?.id ?? null) : null;
 
-      if (!mudouCategoria && !mudouRecuperacao && !mudouValor) continue;
+      // Não basta comparar o valor: cadastrar a tabela do segmento pode manter
+      // o valor em zero (parcela fora da tabela) e ainda assim mudar a razão
+      // registrada. Deixar a razão velha faria a tela mentir sobre o motivo.
+      const mudou =
+        categoria !== lancamento.categoriaVenda ||
+        emRecuperacao !== lancamento.emRecuperacao ||
+        segmento !== lancamento.segmentoVenda ||
+        atual === null ||
+        Number(atual.valor) !== calculo.valor ||
+        atual.regra !== calculo.regra ||
+        atual.tabelaComissaoId !== tabelaId;
+
+      if (!mudou) continue;
 
       await prisma.$transaction(async (tx) => {
         await tx.comissaoRegistro.update({
           where: { id: lancamento.id },
-          data: { categoriaVenda: categoria, emRecuperacao },
+          data: { categoriaVenda: categoria, emRecuperacao, segmentoVenda: segmento },
         });
 
         const dadosWr = {
@@ -246,12 +275,12 @@ async function recalcularLancamentos(
           valor: new Prisma.Decimal(calculo.valor.toFixed(2)),
           regra: calculo.regra,
           observacao: calculo.observacao ?? null,
-          tabelaComissaoId: calculo.aplicavel ? (tabela?.id ?? null) : null,
+          tabelaComissaoId: tabelaId,
           calculadoEm: new Date(),
         };
 
-        if (lancamento.comissaoWr) {
-          await tx.comissaoWr.update({ where: { id: lancamento.comissaoWr.id }, data: dadosWr });
+        if (atual) {
+          await tx.comissaoWr.update({ where: { id: atual.id }, data: dadosWr });
         } else {
           await tx.comissaoWr.create({
             data: { ...dadosWr, comissaoRegistroId: lancamento.id },
@@ -265,30 +294,3 @@ async function recalcularLancamentos(
   }
 }
 
-async function carregarTabelas(): Promise<
-  Map<CategoriaVendedor, { id: string; faixas: FaixaParcela[] }>
-> {
-  const hoje = new Date();
-  const tabelas = await prisma.tabelaComissao.findMany({
-    where: {
-      ativo: true,
-      vigenteDe: { lte: hoje },
-      OR: [{ vigenteAte: null }, { vigenteAte: { gte: hoje } }],
-    },
-    include: { faixas: { orderBy: { parcela: "asc" } } },
-    orderBy: { vigenteDe: "desc" },
-  });
-
-  const mapa = new Map<CategoriaVendedor, { id: string; faixas: FaixaParcela[] }>();
-  for (const tabela of tabelas) {
-    if (mapa.has(tabela.categoria)) continue;
-    mapa.set(tabela.categoria, {
-      id: tabela.id,
-      faixas: tabela.faixas.map((faixa) => ({
-        parcela: faixa.parcela,
-        percentual: Number(faixa.percentual),
-      })),
-    });
-  }
-  return mapa;
-}

@@ -112,6 +112,13 @@ enum AcaoAuditoria {
   RECALCULO_COMISSAO
 }
 
+/// Segmento do bem vendido. A comissão de imóvel e a de automóvel são
+/// negociadas separadamente com a administradora.
+enum SegmentoVenda {
+  IMOVEL
+  AUTOMOVEL
+}
+
 /// Quem recebe a comissão interna da WR sobre uma venda.
 enum PapelComissao {
   VENDEDOR
@@ -475,6 +482,8 @@ model Cota {
   /// Equipe/gerência no momento da venda, para relatórios históricos estáveis.
   equipeId               String?
   gerenciaId             String?
+  /// Segmento normalizado do bem, derivado do produto informado pela base.
+  segmentoVenda          SegmentoVenda?
 
   geraEstorno Boolean @default(false)
 
@@ -634,6 +643,7 @@ model ComissaoRegistro {
 
   categoriaVenda CategoriaVendedor?
   emRecuperacao  Boolean            @default(false)
+  segmentoVenda  SegmentoVenda?
   status         StatusComissao     @default(NORMAL)
 
   hashRegistro String @unique
@@ -692,6 +702,9 @@ model TabelaComissao {
   id           String            @id @default(cuid())
   nome         String
   categoria    CategoriaVendedor
+  /// Segmento a que a tabela se aplica. Vazio vale para todos os segmentos e
+  /// é usado quando não há tabela específica para o segmento da venda.
+  segmento     SegmentoVenda?
   vigenteDe    DateTime          @db.Date
   vigenteAte   DateTime?         @db.Date
   ativo        Boolean           @default(true)
@@ -701,7 +714,7 @@ model TabelaComissao {
   faixas    FaixaComissao[]
   comissoes ComissaoWr[]
 
-  @@index([categoria, vigenteDe])
+  @@index([categoria, segmento, vigenteDe])
 }
 
 model FaixaComissao {
@@ -723,6 +736,8 @@ model TabelaComissaoEquipe {
   id                    String            @id @default(cuid())
   nome                  String
   categoria             CategoriaVendedor
+  /// Mesma regra da tabela da WR: vazio vale para todos os segmentos.
+  segmento              SegmentoVenda?
   vigenteDe             DateTime          @db.Date
   vigenteAte            DateTime?         @db.Date
   ativo                 Boolean           @default(true)
@@ -735,7 +750,7 @@ model TabelaComissaoEquipe {
   regras    RegraComissaoEquipe[]
   comissoes ComissaoEquipe[]
 
-  @@index([categoria, vigenteDe])
+  @@index([categoria, segmento, vigenteDe])
 }
 
 model RegraComissaoEquipe {

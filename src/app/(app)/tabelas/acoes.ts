@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { parseDataBr, parseValorBr } from "@/lib/normalize";
 import { registrarAuditoria } from "@/server/services/auditoria";
 import { apurarComissoesEquipe } from "@/server/services/comissao-equipe";
+import { recalcularComissoes } from "@/server/services/recalculo";
 import { formatarMoeda, formatarNumero } from "@/lib/format";
 
 export interface EstadoAcao {
@@ -16,6 +17,16 @@ export interface EstadoAcao {
 }
 
 const CATEGORIAS = ["INICIANTE", "VETERANO", "EXPERT"] as const;
+
+const SEGMENTOS = ["IMOVEL", "AUTOMOVEL"] as const;
+
+/** Vazio no formulário quer dizer "vale para todos os segmentos". */
+function lerSegmento(formData: FormData): "IMOVEL" | null | undefined {
+  const bruto = String(formData.get("segmento") ?? "").trim();
+  if (!bruto) return null;
+  if (!SEGMENTOS.includes(bruto as (typeof SEGMENTOS)[number])) return undefined;
+  return bruto as "IMOVEL";
+}
 
 /**
  * Cria uma nova versão da tabela de comissão. Tabelas anteriores não são
@@ -30,10 +41,12 @@ export async function acaoCriarTabela(
   const nome = String(formData.get("nome") ?? "").trim();
   const categoria = String(formData.get("categoria") ?? "") as (typeof CATEGORIAS)[number];
   const vigenteDe = parseDataBr(String(formData.get("vigenteDe") ?? ""));
+  const segmento = lerSegmento(formData);
 
   if (nome.length < 2) return { erro: "Informe o nome da tabela." };
   if (!CATEGORIAS.includes(categoria)) return { erro: "Categoria inválida." };
   if (!vigenteDe) return { erro: "Informe a data de início de vigência." };
+  if (segmento === undefined) return { erro: "Segmento inválido." };
 
   const faixas: { parcela: number; percentual: string }[] = [];
   for (let parcela = 1; parcela <= 12; parcela += 1) {
@@ -51,9 +64,11 @@ export async function acaoCriarTabela(
   }
 
   const criada = await prisma.$transaction(async (tx) => {
-    // Encerra a vigência da tabela anterior da mesma categoria no dia anterior.
+    // Encerra a vigência da tabela anterior da mesma categoria E DO MESMO
+    // SEGMENTO. Imóvel e automóvel convivem: criar a de automóvel não pode
+    // encerrar a de imóvel.
     const anterior = await tx.tabelaComissao.findFirst({
-      where: { categoria, ativo: true, vigenteAte: null },
+      where: { categoria, segmento, ativo: true, vigenteAte: null },
       orderBy: { vigenteDe: "desc" },
     });
 
@@ -67,6 +82,7 @@ export async function acaoCriarTabela(
       data: {
         nome,
         categoria,
+        segmento,
         vigenteDe,
         faixas: {
           create: faixas.map((faixa) => ({
@@ -84,7 +100,7 @@ export async function acaoCriarTabela(
     entidade: "TabelaComissao",
     entidadeId: criada.id,
     descricao: `Nova tabela de comissão "${nome}" para ${categoria} vigente a partir de ${vigenteDe.toISOString().slice(0, 10)}`,
-    dadosDepois: { nome, categoria, vigenteDe, faixas },
+    dadosDepois: { nome, categoria, segmento, vigenteDe, faixas },
     usuario: { id: sessao.id, nome: sessao.nome },
   });
 
@@ -116,10 +132,12 @@ export async function acaoCriarTabelaEquipe(
   const categoria = String(formData.get("categoria") ?? "") as (typeof CATEGORIAS)[number];
   const vigenteDe = parseDataBr(String(formData.get("vigenteDe") ?? ""));
   const parcelasParaLiberacao = Number(formData.get("parcelasParaLiberacao") ?? 1);
+  const segmento = lerSegmento(formData);
 
   if (nome.length < 2) return { erro: "Informe o nome da tabela." };
   if (!CATEGORIAS.includes(categoria)) return { erro: "Categoria inválida." };
   if (!vigenteDe) return { erro: "Informe a data de início de vigência." };
+  if (segmento === undefined) return { erro: "Segmento inválido." };
   if (!Number.isInteger(parcelasParaLiberacao) || parcelasParaLiberacao < 1) {
     return { erro: "As parcelas para liberação devem ser um número inteiro a partir de 1." };
   }
@@ -150,7 +168,7 @@ export async function acaoCriarTabelaEquipe(
 
   const criada = await prisma.$transaction(async (tx) => {
     const anterior = await tx.tabelaComissaoEquipe.findFirst({
-      where: { categoria, ativo: true, vigenteAte: null },
+      where: { categoria, segmento, ativo: true, vigenteAte: null },
       orderBy: { vigenteDe: "desc" },
     });
 
@@ -164,6 +182,7 @@ export async function acaoCriarTabelaEquipe(
       data: {
         nome,
         categoria,
+        segmento,
         vigenteDe,
         parcelasParaLiberacao,
         regras: {
@@ -182,7 +201,7 @@ export async function acaoCriarTabelaEquipe(
     entidade: "TabelaComissaoEquipe",
     entidadeId: criada.id,
     descricao: `Nova tabela de comissão da equipe "${nome}" para ${categoria} vigente a partir de ${vigenteDe.toISOString().slice(0, 10)}`,
-    dadosDepois: { nome, categoria, vigenteDe, parcelasParaLiberacao, regras },
+    dadosDepois: { nome, categoria, segmento, vigenteDe, parcelasParaLiberacao, regras },
     usuario: { id: sessao.id, nome: sessao.nome },
   });
 
@@ -316,4 +335,213 @@ export async function acaoAlternarModalidade(
 
   revalidatePath("/tabelas");
   return { sucesso: atualizada.ativo ? "Modalidade reativada." : "Modalidade inativada." };
+}
+
+// ---------------------------------------------------------------------------
+// Correção e remoção de tabelas
+// ---------------------------------------------------------------------------
+
+/**
+ * Corrige uma tabela existente no lugar, em vez de abrir nova vigência.
+ *
+ * A vigência nova existe para quando o percentual REALMENTE mudou a partir de
+ * uma data — o passado continua valendo o que valia. Já uma tabela cadastrada
+ * errada nunca deveria ter valido: corrigi-la é o certo, e abrir vigência só
+ * eternizaria o engano.
+ *
+ * O recálculo roda em seguida, porque o que já foi calculado com a tabela
+ * errada precisa ser refeito. A auditoria guarda como era antes.
+ */
+export async function acaoEditarTabela(
+  _anterior: EstadoAcao,
+  formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { erro: "Tabela não informada." };
+
+  const nome = String(formData.get("nome") ?? "").trim();
+  const vigenteDe = parseDataBr(String(formData.get("vigenteDe") ?? ""));
+  const vigenteAteBruto = String(formData.get("vigenteAte") ?? "").trim();
+  const vigenteAte = vigenteAteBruto ? parseDataBr(vigenteAteBruto) : null;
+  const segmento = lerSegmento(formData);
+
+  if (nome.length < 2) return { erro: "Informe o nome da tabela." };
+  if (!vigenteDe) return { erro: "Informe a data de início de vigência." };
+  if (vigenteAteBruto && !vigenteAte) return { erro: "Data de fim de vigência inválida." };
+  if (vigenteAte && vigenteAte < vigenteDe) {
+    return { erro: "A vigência não pode terminar antes de começar." };
+  }
+  if (segmento === undefined) return { erro: "Segmento inválido." };
+
+  const atual = await prisma.tabelaComissao.findUnique({
+    where: { id },
+    include: { faixas: { orderBy: { parcela: "asc" } } },
+  });
+  if (!atual) return { erro: "Tabela não encontrada." };
+
+  const faixas: { parcela: number; percentual: string }[] = [];
+  for (let parcela = 1; parcela <= 12; parcela += 1) {
+    const bruto = String(formData.get(`percentual_${parcela}`) ?? "").trim();
+    if (!bruto) continue;
+    const valor = parseValorBr(bruto);
+    if (valor === null || valor < 0) {
+      return { erro: `Percentual inválido na parcela ${parcela}.` };
+    }
+    if (valor > 0) faixas.push({ parcela, percentual: valor.toFixed(4) });
+  }
+
+  if (faixas.length === 0) {
+    return { erro: "Informe ao menos um percentual. Parcelas sem percentual não geram comissão." };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.faixaComissao.deleteMany({ where: { tabelaId: id } });
+    await tx.tabelaComissao.update({
+      where: { id },
+      data: {
+        nome,
+        segmento,
+        vigenteDe,
+        vigenteAte,
+        faixas: {
+          create: faixas.map((faixa) => ({
+            parcela: faixa.parcela,
+            percentual: new Prisma.Decimal(faixa.percentual),
+          })),
+        },
+      },
+    });
+  });
+
+  await registrarAuditoria({
+    acao: "MUDANCA_PERCENTUAL",
+    entidade: "TabelaComissao",
+    entidadeId: id,
+    descricao: `Tabela de comissão "${atual.nome}" corrigida`,
+    dadosAntes: {
+      nome: atual.nome,
+      segmento: atual.segmento,
+      vigenteDe: atual.vigenteDe,
+      vigenteAte: atual.vigenteAte,
+      faixas: atual.faixas.map((faixa) => ({
+        parcela: faixa.parcela,
+        percentual: faixa.percentual.toString(),
+      })),
+    },
+    dadosDepois: { nome, segmento, vigenteDe, vigenteAte, faixas },
+    usuario: { id: sessao.id, nome: sessao.nome },
+  });
+
+  const resumo = await recalcularComissoes({ id: sessao.id, nome: sessao.nome });
+
+  revalidatePath("/tabelas");
+  revalidatePath("/comissoes");
+  revalidatePath("/comissoes-equipe");
+
+  return {
+    sucesso:
+      `Tabela corrigida e comissões recalculadas: ${formatarNumero(resumo.lancamentosAtualizados)} ` +
+      `lançamento(s) atualizados, somando ${formatarMoeda(resumo.valorComissaoWr)} de comissão WR.`,
+  };
+}
+
+/**
+ * Apaga uma tabela que nunca foi usada.
+ *
+ * Tabela que já entrou em algum cálculo não é apagada — apagá-la deixaria o
+ * cálculo sem a origem que o justifica. Nesse caso ela é inativada, some das
+ * listas e para de valer para vendas novas, mas o vínculo com o que já foi
+ * calculado continua de pé.
+ */
+export async function acaoRemoverTabela(
+  _anterior: EstadoAcao,
+  formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { erro: "Tabela não informada." };
+
+  const tabela = await prisma.tabelaComissao.findUnique({
+    where: { id },
+    select: { id: true, nome: true, categoria: true, _count: { select: { comissoes: true } } },
+  });
+  if (!tabela) return { erro: "Tabela não encontrada." };
+
+  const emUso = tabela._count.comissoes > 0;
+
+  if (emUso) {
+    await prisma.tabelaComissao.update({ where: { id }, data: { ativo: false } });
+  } else {
+    await prisma.$transaction(async (tx) => {
+      await tx.faixaComissao.deleteMany({ where: { tabelaId: id } });
+      await tx.tabelaComissao.delete({ where: { id } });
+    });
+  }
+
+  await registrarAuditoria({
+    acao: emUso ? "INATIVACAO" : "ATUALIZACAO",
+    entidade: "TabelaComissao",
+    entidadeId: id,
+    descricao: emUso
+      ? `Tabela "${tabela.nome}" inativada — está em ${tabela._count.comissoes} cálculo(s) e por isso não foi apagada`
+      : `Tabela "${tabela.nome}" excluída, sem nenhum cálculo associado`,
+    dadosAntes: { nome: tabela.nome, categoria: tabela.categoria },
+    usuario: { id: sessao.id, nome: sessao.nome },
+  });
+
+  const resumo = await recalcularComissoes({ id: sessao.id, nome: sessao.nome });
+
+  revalidatePath("/tabelas");
+  revalidatePath("/comissoes");
+  revalidatePath("/comissoes-equipe");
+
+  return {
+    sucesso: emUso
+      ? `A tabela já foi usada em ${formatarNumero(tabela._count.comissoes)} cálculo(s), então foi inativada em vez de apagada — ela deixa de valer para vendas novas e o histórico continua rastreável. ${formatarNumero(resumo.lancamentosAtualizados)} lançamento(s) recalculados.`
+      : `Tabela excluída. ${formatarNumero(resumo.lancamentosAtualizados)} lançamento(s) recalculados.`,
+  };
+}
+
+/** Remove uma tabela de comissão da equipe. A apuração é derivada e se refaz. */
+export async function acaoRemoverTabelaEquipe(
+  _anterior: EstadoAcao,
+  formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { erro: "Tabela não informada." };
+
+  const tabela = await prisma.tabelaComissaoEquipe.findUnique({
+    where: { id },
+    select: { id: true, nome: true, categoria: true },
+  });
+  if (!tabela) return { erro: "Tabela não encontrada." };
+
+  // As regras caem por cascata; a apuração é derivada e se refaz em seguida.
+  await prisma.tabelaComissaoEquipe.delete({ where: { id } });
+
+  await registrarAuditoria({
+    acao: "ATUALIZACAO",
+    entidade: "TabelaComissaoEquipe",
+    entidadeId: id,
+    descricao: `Tabela de comissão da equipe "${tabela.nome}" excluída`,
+    dadosAntes: { nome: tabela.nome, categoria: tabela.categoria },
+    usuario: { id: sessao.id, nome: sessao.nome },
+  });
+
+  const resumo = await apurarComissoesEquipe({
+    usuario: { id: sessao.id, nome: sessao.nome },
+    registrarAuditoria: false,
+  });
+
+  revalidatePath("/tabelas");
+  revalidatePath("/comissoes-equipe");
+
+  return {
+    sucesso: `Tabela excluída e comissões reapuradas: ${formatarNumero(resumo.linhasGravadas)} linha(s) sobre ${formatarNumero(resumo.cotasComTabela)} venda(s).`,
+  };
 }

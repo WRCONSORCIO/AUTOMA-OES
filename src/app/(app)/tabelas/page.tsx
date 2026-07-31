@@ -21,9 +21,11 @@ import {
 import {
   BotaoAlternarEquipe,
   BotaoAlternarFlex,
+  EditarTabela,
   FormularioFlex,
   FormularioTabela,
   FormularioTabelaEquipe,
+  RemoverTabelaEquipe,
 } from "./formularios";
 
 export const metadata: Metadata = { title: "Tabelas e Flex" };
@@ -32,6 +34,11 @@ const ROTULO_PAPEL = {
   VENDEDOR: "Vendedor",
   SUPERVISOR: "Supervisão",
   GERENCIA: "Gerência",
+} as const;
+
+const ROTULO_SEGMENTO = {
+  IMOVEL: "Imóvel",
+  AUTOMOVEL: "Automóvel",
 } as const;
 
 const ROTULO_CONDICAO = {
@@ -74,8 +81,15 @@ export default async function PaginaTabelas() {
     <>
       <CabecalhoPagina
         titulo="Tabelas de comissão e Flex"
-        descricao="Percentuais por parcela e modalidades de flex. Alterar percentuais cria uma nova vigência — os cálculos já feitos permanecem com os valores da época."
+        descricao="Duas comissões diferentes convivem aqui: a que a administradora paga PARA a WR, por parcela recebida, e a que a WR paga à própria equipe sobre cada venda."
       />
+
+      <Aviso tom="marca">
+        <strong>Tabelas de comissão</strong> é o que a WR recebe da administradora — percentual por
+        parcela, sobre o crédito com a redução do flex. <strong>Tabelas de comissão da equipe</strong>{" "}
+        é o caminho inverso: o que a WR paga a vendedor, supervisão e gerência. Cada uma pode ter
+        percentuais próprios por segmento, já que imóvel e automóvel são negociados separadamente.
+      </Aviso>
 
       {semTabelaIniciante ? (
         <Aviso tom="atencao">
@@ -125,20 +139,29 @@ export default async function PaginaTabelas() {
               <tr>
                 <Th>Tabela</Th>
                 <Th>Categoria</Th>
+                <Th>Segmento</Th>
                 <Th>Vigente de</Th>
                 <Th>Vigente até</Th>
                 <Th>Percentuais por parcela</Th>
+                {podeEditar ? <Th>Ações</Th> : null}
               </tr>
             </Cabecalho>
             <tbody>
               {tabelas.length === 0 ? (
-                <TabelaVazia colunas={5} mensagem="Nenhuma tabela cadastrada." />
+                <TabelaVazia colunas={podeEditar ? 7 : 6} mensagem="Nenhuma tabela cadastrada." />
               ) : (
                 tabelas.map((tabela) => (
                   <Tr key={tabela.id}>
                     <Td className="font-medium">{tabela.nome}</Td>
                     <Td>
                       <Badge tom="marca">{tabela.categoria}</Badge>
+                    </Td>
+                    <Td>
+                      {tabela.segmento ? (
+                        <Badge tom="neutro">{ROTULO_SEGMENTO[tabela.segmento]}</Badge>
+                      ) : (
+                        <span className="text-[var(--color-texto-3)]">Todos</span>
+                      )}
                     </Td>
                     <Td className="whitespace-nowrap">{formatarData(tabela.vigenteDe)}</Td>
                     <Td className="whitespace-nowrap">
@@ -160,6 +183,25 @@ export default async function PaginaTabelas() {
                         ))}
                       </div>
                     </Td>
+                    {podeEditar ? (
+                      <Td>
+                        <EditarTabela
+                          tabela={{
+                            id: tabela.id,
+                            nome: tabela.nome,
+                            segmento: tabela.segmento,
+                            vigenteDe: tabela.vigenteDe.toISOString().slice(0, 10),
+                            vigenteAte: tabela.vigenteAte
+                              ? tabela.vigenteAte.toISOString().slice(0, 10)
+                              : null,
+                            faixas: tabela.faixas.map((faixa) => ({
+                              parcela: faixa.parcela,
+                              percentual: faixa.percentual.toString(),
+                            })),
+                          }}
+                        />
+                      </Td>
+                    ) : null}
                   </Tr>
                 ))
               )}
@@ -194,16 +236,18 @@ export default async function PaginaTabelas() {
               <tr>
                 <Th>Tabela</Th>
                 <Th>Categoria</Th>
+                <Th>Segmento</Th>
                 <Th>Vigente de</Th>
                 <Th>Vigente até</Th>
                 <Th className="text-right">Libera em</Th>
                 <Th>Percentuais por papel</Th>
+                {podeEditar ? <Th>Ações</Th> : null}
               </tr>
             </Cabecalho>
             <tbody>
               {tabelasEquipe.length === 0 ? (
                 <TabelaVazia
-                  colunas={6}
+                  colunas={podeEditar ? 8 : 7}
                   mensagem="Nenhuma tabela cadastrada. Sem ela o sistema não tem percentual para calcular a comissão da equipe."
                 />
               ) : (
@@ -212,6 +256,13 @@ export default async function PaginaTabelas() {
                     <Td className="font-medium">{tabela.nome}</Td>
                     <Td>
                       <Badge tom="marca">{tabela.categoria}</Badge>
+                    </Td>
+                    <Td>
+                      {tabela.segmento ? (
+                        <Badge tom="neutro">{ROTULO_SEGMENTO[tabela.segmento]}</Badge>
+                      ) : (
+                        <span className="text-[var(--color-texto-3)]">Todos</span>
+                      )}
                     </Td>
                     <Td className="whitespace-nowrap">{formatarData(tabela.vigenteDe)}</Td>
                     <Td className="whitespace-nowrap">
@@ -239,6 +290,11 @@ export default async function PaginaTabelas() {
                         ))}
                       </div>
                     </Td>
+                    {podeEditar ? (
+                      <Td>
+                        <RemoverTabelaEquipe id={tabela.id} nome={tabela.nome} />
+                      </Td>
+                    ) : null}
                   </Tr>
                 ))
               )}
