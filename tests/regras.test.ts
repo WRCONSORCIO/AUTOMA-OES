@@ -11,17 +11,9 @@ import {
   resolverParcela,
   resolverVendedorEfetivo,
   saoDuplicados,
-  type FaixaParcela,
 } from "@/server/domain/regras";
 
 const dia = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
-
-const TABELA_INICIANTE: FaixaParcela[] = [
-  { parcela: 1, percentual: 4 },
-  { parcela: 2, percentual: 3 },
-  { parcela: 3, percentual: 2 },
-  { parcela: 4, percentual: 1 },
-];
 
 describe("períodos que se sobrepõem no mesmo dia", () => {
   // O cadastro nasce Iniciante e a categoria é trocada no mesmo dia: os dois
@@ -182,78 +174,74 @@ describe("flex define a base de cálculo", () => {
   });
 });
 
-describe("comissão WR por parcela e categoria", () => {
-  it("usa o percentual da parcela que está sendo paga", () => {
+describe("o que a WR recebe da administradora", () => {
+  // O relatório de fechamento é a fonte da verdade: a administradora sabe
+  // quanto deve. A categoria do vendedor não entra nesta conta — ela decide
+  // quanto a WR repassa, que é o caminho inverso.
+  it("registra o valor que o relatório informou", () => {
     const resultado = calcularComissaoWr({
-      categoria: "INICIANTE",
-      parcela: 3,
-      valorCredito: 200_000,
+      valorComissao: 825,
+      percentualRelatorio: 1.5,
+      valorCredito: 110_000,
       percentualFlex: 50,
-      faixas: TABELA_INICIANTE,
-      tipo: "PAGAMENTO_COMISSAO",
-    });
-
-    expect(resultado.aplicavel).toBe(true);
-    expect(resultado.baseCalculo).toBe(100_000);
-    expect(resultado.percentual).toBe(2);
-    expect(resultado.valor).toBe(2_000);
-  });
-
-  it("parcela acima da tabela não gera comissão de Iniciante", () => {
-    const resultado = calcularComissaoWr({
-      categoria: "INICIANTE",
-      parcela: 5,
-      valorCredito: 200_000,
-      percentualFlex: 50,
-      faixas: TABELA_INICIANTE,
-      tipo: "PAGAMENTO_COMISSAO",
-    });
-
-    expect(resultado.aplicavel).toBe(false);
-    expect(resultado.valor).toBe(0);
-    expect(resultado.regra).toBe("PARCELA_FORA_DA_TABELA");
-  });
-
-  it("venda sem categoria definida não gera comissão", () => {
-    const resultado = calcularComissaoWr({
-      categoria: null,
-      parcela: 1,
-      valorCredito: 100_000,
-      percentualFlex: 50,
-      faixas: TABELA_INICIANTE,
       tipo: "INCLUSAO_DE_PLANO",
     });
 
-    expect(resultado.aplicavel).toBe(false);
-    expect(resultado.regra).toBe("SEM_CATEGORIA");
+    expect(resultado.aplicavel).toBe(true);
+    expect(resultado.valor).toBe(825);
+    expect(resultado.percentual).toBe(1.5);
+    expect(resultado.baseCalculo).toBe(55_000);
+    expect(resultado.regra).toBe("RELATORIO_ADMINISTRADORA");
   });
 
-  it("categoria sem tabela cadastrada não gera comissão", () => {
+  it("a venda sem categoria continua gerando comissão para a WR", () => {
     const resultado = calcularComissaoWr({
-      categoria: "VETERANO",
-      parcela: 1,
-      valorCredito: 100_000,
+      valorComissao: 625,
+      percentualRelatorio: 0.5,
+      valorCredito: 250_000,
       percentualFlex: 50,
-      faixas: [],
       tipo: "PAGAMENTO_COMISSAO",
     });
 
-    expect(resultado.aplicavel).toBe(false);
-    expect(resultado.regra).toBe("SEM_TABELA");
+    expect(resultado.valor).toBe(625);
   });
 
-  it("cancelamento de plano devolve a comissão (valor negativo)", () => {
+  it("qualquer parcela conta — não existe parcela fora da tabela aqui", () => {
     const resultado = calcularComissaoWr({
-      categoria: "INICIANTE",
-      parcela: 1,
+      valorComissao: 250,
+      percentualRelatorio: 0.5,
+      valorCredito: 100_000,
+      percentualFlex: 50,
+      tipo: "PAGAMENTO_COMISSAO",
+    });
+
+    expect(resultado.valor).toBe(250);
+  });
+
+  it("cancelamento chega negativo no relatório e é registrado como estorno", () => {
+    const resultado = calcularComissaoWr({
+      valorComissao: -4_000,
+      percentualRelatorio: 4,
       valorCredito: 200_000,
       percentualFlex: 50,
-      faixas: TABELA_INICIANTE,
       tipo: "CANCELAMENTO_DE_PLANO",
     });
 
     expect(resultado.valor).toBe(-4_000);
-    expect(resultado.regra).toBe("TABELA_CATEGORIA_ESTORNO");
+    expect(resultado.regra).toBe("RELATORIO_ESTORNO");
+  });
+
+  it("sem percentual impresso, deriva o efetivo sobre a base", () => {
+    const resultado = calcularComissaoWr({
+      valorComissao: 1_000,
+      percentualRelatorio: null,
+      valorCredito: 200_000,
+      percentualFlex: 50,
+      tipo: "PAGAMENTO_COMISSAO",
+    });
+
+    // 1.000 sobre a base de 100.000 = 1%.
+    expect(resultado.percentual).toBe(1);
   });
 });
 

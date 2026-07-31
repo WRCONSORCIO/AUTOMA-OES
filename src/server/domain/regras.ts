@@ -219,22 +219,13 @@ export function normalizarSegmento(
 }
 
 // ---------------------------------------------------------------------------
-// REGRA: comissão WR por categoria e parcela
+// REGRA: o que a WR recebe da administradora
 // ---------------------------------------------------------------------------
 
+/** Faixa da tabela que define o REPASSE ao vendedor, parcela a parcela. */
 export interface FaixaParcela {
   parcela: number;
   percentual: number;
-}
-
-export interface EntradaComissaoWr {
-  categoria: CategoriaVendedor | null;
-  parcela: number;
-  valorCredito: number;
-  percentualFlex: number | null;
-  /** Faixas da tabela vigente para a categoria da venda. */
-  faixas: readonly FaixaParcela[];
-  tipo: TipoLancamentoComissao;
 }
 
 export interface ResultadoComissaoWr {
@@ -246,65 +237,45 @@ export interface ResultadoComissaoWr {
   observacao?: string;
 }
 
+export interface EntradaComissaoWr {
+  /** Valor que o relatório da administradora informa para o lançamento. */
+  valorComissao: number;
+  /** Percentual impresso no relatório, guardado para conferência. */
+  percentualRelatorio: number | null;
+  valorCredito: number;
+  percentualFlex: number | null;
+  tipo: TipoLancamentoComissao;
+}
+
 /**
- * Calcula a comissão interna da WR cruzando a parcela paga no relatório com a
- * tabela de percentuais da categoria da venda.
+ * O que a WR recebeu da administradora num lançamento.
  *
- * Parcela sem faixa cadastrada (ex.: parcela 5 na tabela de Iniciante que vai
- * até a 4) não gera comissão WR.
+ * Não há cálculo a fazer: o valor é o que o relatório de fechamento manda, e a
+ * administradora é a fonte da verdade sobre a própria dívida. A categoria do
+ * vendedor não entra aqui — ela decide quanto a WR REPASSA ao vendedor, que é
+ * o caminho inverso e vive nas tabelas de comissão da equipe.
+ *
+ * O sinal também vem pronto: cancelamento de plano chega negativo no relatório,
+ * porque é devolução do que já havia sido pago.
  */
 export function calcularComissaoWr(entrada: EntradaComissaoWr): ResultadoComissaoWr {
   const baseCalculo = calcularBaseComissao(entrada.valorCredito, entrada.percentualFlex);
+  const valor = arredondar2(entrada.valorComissao);
 
-  if (!entrada.categoria) {
-    return {
-      aplicavel: false,
-      baseCalculo,
-      percentual: 0,
-      valor: 0,
-      regra: "SEM_CATEGORIA",
-      observacao: "Categoria da venda não identificada.",
-    };
-  }
-
-  if (entrada.faixas.length === 0) {
-    return {
-      aplicavel: false,
-      baseCalculo,
-      percentual: 0,
-      valor: 0,
-      regra: "SEM_TABELA",
-      observacao: `Não há tabela de comissão vigente para ${entrada.categoria}.`,
-    };
-  }
-
-  const faixa = entrada.faixas.find((item) => item.parcela === entrada.parcela);
-  if (!faixa) {
-    return {
-      aplicavel: false,
-      baseCalculo,
-      percentual: 0,
-      valor: 0,
-      regra: "PARCELA_FORA_DA_TABELA",
-      observacao: `Parcela ${entrada.parcela} não possui percentual cadastrado para ${entrada.categoria}.`,
-    };
-  }
-
-  const valorBruto = arredondar2((baseCalculo * faixa.percentual) / 100);
-
-  // Cancelamento de plano inverte o sinal: a WR devolve a comissão recebida.
-  const valor =
-    entrada.tipo === "CANCELAMENTO_DE_PLANO" ? arredondar2(-valorBruto) : valorBruto;
+  // Percentual efetivo sobre a base, quando o relatório não traz o dele.
+  const percentual =
+    entrada.percentualRelatorio ??
+    (baseCalculo > 0 ? arredondar2((valor / baseCalculo) * 100) : 0);
 
   return {
     aplicavel: true,
     baseCalculo,
-    percentual: faixa.percentual,
+    percentual,
     valor,
     regra:
       entrada.tipo === "CANCELAMENTO_DE_PLANO"
-        ? "TABELA_CATEGORIA_ESTORNO"
-        : "TABELA_CATEGORIA",
+        ? "RELATORIO_ESTORNO"
+        : "RELATORIO_ADMINISTRADORA",
   };
 }
 
