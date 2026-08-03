@@ -17,6 +17,7 @@ import {
 } from "@/server/services/vendedores";
 import { registrarAuditoria } from "@/server/services/auditoria";
 import { apurarComissoesEquipe } from "@/server/services/comissao-equipe";
+import { conferirFormulario, FORMULARIOS } from "./formularios";
 import { lerPdfComissao, type RegistroComissaoPdf } from "./pdf-comissao";
 
 const TAMANHO_LOTE = 100;
@@ -81,6 +82,13 @@ export async function importarComissaoPdf(
 
   try {
     const leitura = await lerPdfComissao(entrada.arquivo);
+
+    conferirFormulario(
+      leitura.formulario,
+      FORMULARIOS.COMISSAO_WR,
+      "comissão que a WR recebe",
+    );
+
     contadores.erros = leitura.erros.length;
 
     if (leitura.erros.length > 0) {
@@ -302,6 +310,8 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
   // entra: ela decide o repasse, que é apurado separadamente.
   const calculo = calcularComissaoWr({
     valorComissao: registro.valorComissao,
+    valorDsr: registro.valorDsr,
+    valorSeguro: registro.valorSeguro,
     percentualRelatorio: registro.percentualComissao,
     valorCredito: registro.valorCredito,
     percentualFlex: registro.percentualFlex,

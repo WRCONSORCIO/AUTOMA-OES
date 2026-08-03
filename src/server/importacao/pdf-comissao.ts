@@ -1,4 +1,5 @@
 import type { TipoLancamentoComissao } from "@prisma/client";
+import { lerFormulario } from "./formularios";
 import {
   limparNomeVendedor,
   normalizarContrato,
@@ -72,6 +73,8 @@ export interface TotaisRelatorio {
 }
 
 export interface ResultadoLeituraPdf {
+  /** Código do formulário lido no cabeçalho, usado para recusar arquivo trocado. */
+  formulario: string | null;
   registros: RegistroComissaoPdf[];
   erros: ErroPdf[];
   paginas: number;
@@ -272,6 +275,15 @@ export function reconstruirLinhas(itens: readonly ItemTexto[]): string[] {
 export async function lerPdfComissao(arquivo: Buffer): Promise<ResultadoLeituraPdf> {
   const { linhas, brutas, paginas } = await extrairLinhas(arquivo);
 
+  // O código do formulário identifica o relatório: os três do fechamento têm
+  // cabeçalho quase igual, e subir um no lugar do outro trocaria receita por
+  // repasse.
+  let formulario: string | null = null;
+  for (const linha of brutas) {
+    formulario = lerFormulario(linha.texto);
+    if (formulario) break;
+  }
+
   const cabecalhoValores =
     brutas.find((linha) => RE_CABECALHO_VALORES.test(linha.texto))?.texto ?? null;
   const faixas = derivarFaixas(cabecalhoValores);
@@ -356,6 +368,7 @@ export async function lerPdfComissao(arquivo: Buffer): Promise<ResultadoLeituraP
     registros,
     erros,
     paginas,
+    formulario,
     dataEmissao,
     administradora,
     totais,

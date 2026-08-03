@@ -3,6 +3,7 @@ import "server-only";
 import { normalizarCota, normalizarGrupo, parseDataBr, parseValorBr } from "@/lib/normalize";
 import { normalizarSegmento } from "@/server/domain/regras";
 import { extrairLinhas } from "./pdf-comissao";
+import { lerFormulario } from "./formularios";
 import type { SegmentoVenda } from "@prisma/client";
 
 /**
@@ -46,6 +47,7 @@ export interface ResultadoLeituraBonus {
   periodoInicio: Date | null;
   periodoFim: Date | null;
   dataEmissao: Date | null;
+  formulario: string | null;
   prestadora: string | null;
   /** Total impresso no rodapé, usado para conferir a leitura. */
   totalRelatorio: number | null;
@@ -84,11 +86,14 @@ export async function lerPdfBonus(arquivo: Buffer): Promise<ResultadoLeituraBonu
   let periodoFim: Date | null = null;
   let dataEmissao: Date | null = null;
   let prestadora: string | null = null;
+  let formulario: string | null = null;
   let totalRelatorio: number | null = null;
   let totalLiquido: number | null = null;
 
   for (const linha of brutas) {
     const texto = linha.texto;
+
+    if (!formulario) formulario = lerFormulario(texto);
 
     const segmento = SEGMENTO.exec(texto);
     if (segmento) {
@@ -164,6 +169,7 @@ export async function lerPdfBonus(arquivo: Buffer): Promise<ResultadoLeituraBonu
     periodoInicio,
     periodoFim,
     dataEmissao,
+    formulario,
     prestadora,
     totalRelatorio,
     totalLiquido,
