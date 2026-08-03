@@ -10,7 +10,7 @@ import { arredondar2, calcularBaseComissao, inicioDoDiaUtc } from "./regras";
  * assim que "gerência só recebe na primeira parcela" fica configurado, sem
  * nenhuma exceção escrita em código.
  *
- * Novato, supervisão e gerência são o que a WR paga. Veterano e expert são o
+ * Iniciante, supervisão e gerência são o que a WR paga. Veterano e expert são o
  * que a administradora paga direto ao vendedor: a WR não desembolsa, mas
  * precisa do valor para calcular o estorno quando a venda cai.
  */
@@ -30,7 +30,7 @@ export interface TabelaInterna {
 }
 
 export const ROTULO_DESTINO: Record<DestinoComissao, string> = {
-  NOVATO: "Novato",
+  INICIANTE: "Iniciante",
   VETERANO: "Veterano",
   EXPERT: "Expert",
   SUPERVISOR: "Supervisão",
@@ -42,9 +42,9 @@ export const ROTULO_SEGMENTO: Record<SegmentoVenda, string> = {
   AUTOMOVEL: "Móveis",
 };
 
-/** Novato, supervisão e gerência a WR paga. Veterano e expert são só estorno. */
+/** Iniciante, supervisão e gerência a WR paga. Veterano e expert só estorno. */
 export const DESTINO_PAGO: Record<DestinoComissao, boolean> = {
-  NOVATO: true,
+  INICIANTE: true,
   VETERANO: false,
   EXPERT: false,
   SUPERVISOR: true,
@@ -58,7 +58,7 @@ type CargaInicial = Record<
 
 /** Percentuais informados pela WR. Ponto de partida, não regra de código. */
 export const CARGA_INICIAL: CargaInicial = {
-  NOVATO: {
+  INICIANTE: {
     IMOVEL: [
       [1, 0.5],
       [2, 0.4],
@@ -117,7 +117,7 @@ export const FLEX_INICIAL = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 /** Destinos que a WR efetivamente paga. Os demais existem para o estorno. */
 export const DESTINOS_PAGOS_PELA_WR: readonly DestinoComissao[] = [
-  "NOVATO",
+  "INICIANTE",
   "SUPERVISOR",
   "GERENCIA",
 ];

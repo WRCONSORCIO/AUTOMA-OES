@@ -39,7 +39,7 @@ const ABAS: Aba[] = [
 
 /** A ordem em que as tabelas aparecem: quem a WR paga primeiro. */
 const ORDEM_DESTINO: DestinoComissao[] = [
-  "NOVATO",
+  "INICIANTE",
   "SUPERVISOR",
   "GERENCIA",
   "VETERANO",
@@ -99,7 +99,7 @@ export default async function PaginaConfiguracoes({
       {aba === "comissoes" ? (
         <>
           <Aviso tom="marca">
-            <strong>Novato, supervisão e gerência</strong> são o que a WR paga.{" "}
+            <strong>Iniciante, supervisão e gerência</strong> são o que a WR paga.{" "}
             <strong>Veterano e expert</strong> recebem direto da administradora — a WR não paga
             nada por essas vendas, e as tabelas existem para calcular o estorno quando a venda cai.
             Parcela deixada em branco não paga.

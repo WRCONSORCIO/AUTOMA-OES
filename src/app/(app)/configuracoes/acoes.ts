@@ -16,7 +16,7 @@ export interface EstadoAcao {
   sucesso?: string;
 }
 
-const DESTINOS = ["NOVATO", "VETERANO", "EXPERT", "SUPERVISOR", "GERENCIA"] as const;
+const DESTINOS = ["INICIANTE", "VETERANO", "EXPERT", "SUPERVISOR", "GERENCIA"] as const;
 const SEGMENTOS = ["IMOVEL", "AUTOMOVEL"] as const;
 
 /**
