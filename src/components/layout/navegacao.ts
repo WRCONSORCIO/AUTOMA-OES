@@ -22,7 +22,7 @@ export const NAVEGACAO: readonly ItemNavegacao[] = [
   { href: "/vinculos", rotulo: "Vínculos de vendedores", modulo: "vendedores", icone: "vinculos", grupo: "Cadastros" },
   { href: "/equipes", rotulo: "Equipes", modulo: "equipes", icone: "equipes", grupo: "Cadastros" },
   { href: "/gerencias", rotulo: "Gerências", modulo: "gerencias", icone: "gerencias", grupo: "Cadastros" },
-  { href: "/tabelas", rotulo: "Tabelas e Flex", modulo: "tabelas", icone: "tabelas", grupo: "Cadastros" },
+  { href: "/configuracoes", rotulo: "Configurações", modulo: "tabelas", icone: "configuracoes", grupo: "Sistema" },
 
   { href: "/usuarios", rotulo: "Usuários", modulo: "usuarios", icone: "usuarios", grupo: "Sistema" },
   { href: "/auditoria", rotulo: "Auditoria", modulo: "auditoria", icone: "auditoria", grupo: "Sistema" },
