@@ -121,6 +121,19 @@ enum SegmentoVenda {
   AUTOMOVEL
 }
 
+/// A quem se refere cada tabela de comissão.
+///
+/// Novato, supervisão e gerência são o que a WR PAGA. Veterano e expert são o
+/// que a administradora paga direto ao vendedor — a WR não desembolsa nada,
+/// mas precisa do valor para calcular o estorno quando a venda cai.
+enum DestinoComissao {
+  NOVATO
+  VETERANO
+  EXPERT
+  SUPERVISOR
+  GERENCIA
+}
+
 /// Quem recebe a comissão interna da WR sobre uma venda.
 enum PapelComissao {
   VENDEDOR
@@ -816,6 +829,44 @@ model ComissaoWr {
 
   @@index([categoriaVenda])
   @@index([calculadoEm])
+}
+
+/// Percentuais de comissão por destino, produto e parcela.
+///
+/// As cinco tabelas — novato, veterano, expert, supervisão e gerência — têm a
+/// mesma forma: para cada segmento, um percentual por parcela recebida.
+/// Parcela sem percentual cadastrado não gera nada, e é assim que se configura
+/// "gerência só recebe na primeira" sem escrever isso em código.
+///
+/// Versionada por vigência: alterar percentuais abre uma versão nova e não
+/// reescreve o que já foi apurado.
+model TabelaComissaoInterna {
+  id         String          @id @default(cuid())
+  destino    DestinoComissao
+  segmento   SegmentoVenda
+  vigenteDe  DateTime        @db.Date
+  vigenteAte DateTime?       @db.Date
+  ativo      Boolean         @default(true)
+
+  observacoes  String?
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  faixas FaixaComissaoInterna[]
+
+  @@index([destino, segmento, vigenteDe])
+}
+
+model FaixaComissaoInterna {
+  id         String   @id @default(cuid())
+  tabelaId   String
+  parcela    Int
+  percentual Decimal  @db.Decimal(9, 4)
+  criadoEm   DateTime @default(now())
+
+  tabela TabelaComissaoInterna @relation(fields: [tabelaId], references: [id], onDelete: Cascade)
+
+  @@unique([tabelaId, parcela])
 }
 
 /// Tabela de percentuais por parcela. Versionada por vigência — alterar
