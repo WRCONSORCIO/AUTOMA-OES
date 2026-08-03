@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { hashConteudo } from "@/server/domain/regras";
 import { registrarAuditoria } from "@/server/services/auditoria";
 import type { ContextoUsuario } from "@/server/services/vendedores";
+import { conferirFormulario, FORMULARIOS } from "./formularios";
 import { lerPdfBonus, type RegistroBonusPdf } from "./pdf-bonus";
 
 const TAMANHO_LOTE = 200;
@@ -66,6 +67,9 @@ export async function importarBonusPdf(
 
   try {
     const leitura = await lerPdfBonus(entrada.arquivo);
+
+    conferirFormulario(leitura.formulario, FORMULARIOS.BONUS, "bônus de incentivo");
+
     contadores.erros = leitura.erros.length;
 
     if (leitura.erros.length > 0) {

@@ -6,8 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { hashConteudo } from "@/server/domain/regras";
 import { registrarAuditoria } from "@/server/services/auditoria";
 import type { ContextoUsuario } from "@/server/services/vendedores";
+import { conferirFormulario, FORMULARIOS } from "./formularios";
 import {
-  FORMULARIO_COMISSAO_VENDEDOR,
   lerPdfComissaoVendedor,
   type RegistroComissaoVendedorPdf,
 } from "./pdf-comissao-vendedor";
@@ -77,12 +77,11 @@ export async function importarComissaoVendedorPdf(
   try {
     const leitura = await lerPdfComissaoVendedor(entrada.arquivo);
 
-    if (leitura.formulario && leitura.formulario !== FORMULARIO_COMISSAO_VENDEDOR) {
-      throw new Error(
-        `Este arquivo é o formulário ${leitura.formulario}, não o ${FORMULARIO_COMISSAO_VENDEDOR} da comissão dos vendedores. ` +
-          "O relatório da comissão que a WR recebe deve ser importado na opção correspondente.",
-      );
-    }
+    conferirFormulario(
+      leitura.formulario,
+      FORMULARIOS.COMISSAO_VENDEDOR,
+      "comissão dos vendedores",
+    );
 
     contadores.erros = leitura.erros.length;
 

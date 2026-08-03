@@ -238,8 +238,12 @@ export interface ResultadoComissaoWr {
 }
 
 export interface EntradaComissaoWr {
-  /** Valor que o relatório da administradora informa para o lançamento. */
+  /** Coluna VLR.COMISSAO do relatório. */
   valorComissao: number;
+  /** Coluna VLR.DSR — descanso semanal remunerado, pago junto. */
+  valorDsr: number | null;
+  /** Coluna VLR.SEGURO — também entra no que a administradora paga. */
+  valorSeguro: number | null;
   /** Percentual impresso no relatório, guardado para conferência. */
   percentualRelatorio: number | null;
   valorCredito: number;
@@ -255,12 +259,20 @@ export interface EntradaComissaoWr {
  * vendedor não entra aqui — ela decide quanto a WR REPASSA ao vendedor, que é
  * o caminho inverso e vive nas tabelas de comissão da equipe.
  *
- * O sinal também vem pronto: cancelamento de plano chega negativo no relatório,
+ * O recebido é a soma das TRÊS colunas de dinheiro: comissão, DSR e seguro. É
+ * assim que o próprio relatório fecha — o "VLR. COMISSAO" do rodapé soma as
+ * três, e é o número que a WR confere. O imposto de renda vem depois disso,
+ * no total líquido, e não é abatido aqui: o que a WR tem a receber é o valor
+ * cheio.
+ *
+ * O sinal vem pronto: cancelamento de plano chega negativo no relatório,
  * porque é devolução do que já havia sido pago.
  */
 export function calcularComissaoWr(entrada: EntradaComissaoWr): ResultadoComissaoWr {
   const baseCalculo = calcularBaseComissao(entrada.valorCredito, entrada.percentualFlex);
-  const valor = arredondar2(entrada.valorComissao);
+  const valor = arredondar2(
+    entrada.valorComissao + (entrada.valorDsr ?? 0) + (entrada.valorSeguro ?? 0),
+  );
 
   // Percentual efetivo sobre a base, quando o relatório não traz o dele.
   const percentual =

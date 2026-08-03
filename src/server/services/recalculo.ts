@@ -178,6 +178,8 @@ async function recalcularLancamentos(
         valorCredito: true,
         percentualFlex: true,
         valorComissao: true,
+        valorDsr: true,
+        valorSeguro: true,
         percentualComissao: true,
         categoriaVenda: true,
         emRecuperacao: true,
@@ -227,6 +229,8 @@ async function recalcularLancamentos(
 
       const calculo = calcularComissaoWr({
         valorComissao: Number(lancamento.valorComissao),
+        valorDsr: lancamento.valorDsr === null ? null : Number(lancamento.valorDsr),
+        valorSeguro: lancamento.valorSeguro === null ? null : Number(lancamento.valorSeguro),
         percentualRelatorio:
           lancamento.percentualComissao === null
             ? null

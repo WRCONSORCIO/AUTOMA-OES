@@ -6,10 +6,11 @@ import {
   parseValorBr,
 } from "@/lib/normalize";
 import { extrairLinhas } from "./pdf-comissao";
+import { lerFormulario } from "./formularios";
 
 /**
- * Leitor do relatório de comissão dos vendedores (SERVOPA — formulário CV065E,
- * "REL COMISSAO Y VENDEDOR").
+ * Leitor do relatório de comissão dos vendedores (SERVOPA — formulário CV069E,
+ * também emitido como VC069E, "REL COMISSAO Y VENDEDOR").
  *
  * É o que a administradora paga DIRETO ao vendedor — categorias veterano e
  * expert. A WR não paga nada dessas vendas; o relatório entra no sistema para
@@ -25,8 +26,6 @@ import { extrairLinhas } from "./pdf-comissao";
  *         37966I10                          103.312,00  50,00    51,66   0,00  0,00  0,1000
  *                   3   22/07/2026                          01/05/2026     I
  */
-
-export const FORMULARIO_COMISSAO_VENDEDOR = "CV065E";
 
 export interface RegistroComissaoVendedorPdf {
   vendedorDocumento: string;
@@ -62,7 +61,6 @@ export interface ResultadoLeituraComissaoVendedor {
   divergencia: number | null;
 }
 
-const FORMULARIO = /\b(CV\d{3}[A-Z])\b/;
 const EMISSAO = /EMISSAO:\s*(\d{2}\/\d{2}\/\d{4})/;
 
 /** `VENDEDOR (CPF/CNPJ): 35.666.540/0001-93 - 35.666.540 ELZENI DE PAIVA FERREIRA` */
@@ -166,10 +164,7 @@ export function interpretarLinhas(
   for (const linha of brutas) {
     const texto = linha.texto;
 
-    if (!formulario) {
-      const achado = FORMULARIO.exec(texto);
-      if (achado) formulario = achado[1]!;
-    }
+    if (!formulario) formulario = lerFormulario(texto);
     if (!dataEmissao) {
       const achado = EMISSAO.exec(texto);
       if (achado) dataEmissao = parseDataBr(achado[1]!);

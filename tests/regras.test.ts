@@ -181,6 +181,8 @@ describe("o que a WR recebe da administradora", () => {
   it("registra o valor que o relatório informou", () => {
     const resultado = calcularComissaoWr({
       valorComissao: 825,
+      valorDsr: 0,
+      valorSeguro: 0,
       percentualRelatorio: 1.5,
       valorCredito: 110_000,
       percentualFlex: 50,
@@ -197,6 +199,8 @@ describe("o que a WR recebe da administradora", () => {
   it("a venda sem categoria continua gerando comissão para a WR", () => {
     const resultado = calcularComissaoWr({
       valorComissao: 625,
+      valorDsr: 0,
+      valorSeguro: 0,
       percentualRelatorio: 0.5,
       valorCredito: 250_000,
       percentualFlex: 50,
@@ -209,6 +213,8 @@ describe("o que a WR recebe da administradora", () => {
   it("qualquer parcela conta — não existe parcela fora da tabela aqui", () => {
     const resultado = calcularComissaoWr({
       valorComissao: 250,
+      valorDsr: 0,
+      valorSeguro: 0,
       percentualRelatorio: 0.5,
       valorCredito: 100_000,
       percentualFlex: 50,
@@ -221,6 +227,8 @@ describe("o que a WR recebe da administradora", () => {
   it("cancelamento chega negativo no relatório e é registrado como estorno", () => {
     const resultado = calcularComissaoWr({
       valorComissao: -4_000,
+      valorDsr: 0,
+      valorSeguro: 0,
       percentualRelatorio: 4,
       valorCredito: 200_000,
       percentualFlex: 50,
@@ -231,9 +239,41 @@ describe("o que a WR recebe da administradora", () => {
     expect(resultado.regra).toBe("RELATORIO_ESTORNO");
   });
 
+  it("soma DSR e seguro: é assim que o relatório fecha o total", () => {
+    // No fechamento de 22/07 o rodapé soma as três colunas:
+    // 261.090,87 de comissão + 0,00 de DSR + 138,83 de seguro = 261.229,70.
+    const resultado = calcularComissaoWr({
+      valorComissao: 825,
+      valorDsr: 12.5,
+      valorSeguro: 3.33,
+      percentualRelatorio: 1.5,
+      valorCredito: 110_000,
+      percentualFlex: 50,
+      tipo: "PAGAMENTO_COMISSAO",
+    });
+
+    expect(resultado.valor).toBe(840.83);
+  });
+
+  it("o imposto de renda não é abatido — o recebido é o valor cheio", () => {
+    const resultado = calcularComissaoWr({
+      valorComissao: 1_000,
+      valorDsr: null,
+      valorSeguro: null,
+      percentualRelatorio: null,
+      valorCredito: 200_000,
+      percentualFlex: 50,
+      tipo: "PAGAMENTO_COMISSAO",
+    });
+
+    expect(resultado.valor).toBe(1_000);
+  });
+
   it("sem percentual impresso, deriva o efetivo sobre a base", () => {
     const resultado = calcularComissaoWr({
       valorComissao: 1_000,
+      valorDsr: 0,
+      valorSeguro: 0,
       percentualRelatorio: null,
       valorCredito: 200_000,
       percentualFlex: 50,
