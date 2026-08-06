@@ -151,6 +151,23 @@ enum CondicaoComissao {
   EQUIPE_HABILITADA
 }
 
+/// Tipo de estorno. O briefing define dois, e o percentual de cada um é
+/// configurável — nunca constante no código.
+enum TipoEstorno {
+  /// Cota cancelada fora de período de recuperação.
+  CANCELAMENTO
+  /// Cota marcada permanentemente como vendida durante recuperação.
+  RECUPERACAO
+}
+
+/// Ciclo de vida de um evento de domínio no outbox.
+enum StatusEvento {
+  PENDENTE
+  PROCESSANDO
+  PROCESSADO
+  FALHA
+}
+
 enum TipoBackup {
   AUTOMATICO
   MANUAL
@@ -193,6 +210,7 @@ model Usuario {
   overridesHistorico    CotaVendedorOverrideHistorico[]
   alocacoesRegistradas  VendedorAlocacaoHistorico[]
   vinculosRegistrados   PessoaVinculoHistorico[]
+  regrasEstorno         RegraEstorno[]
 
   @@index([perfil, ativo])
   @@index([gerenciaId])
@@ -331,6 +349,7 @@ model Vendedor {
   bonus                BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
   comissoes           ComissaoRegistro[]
+  regrasEstorno       RegraEstorno[]
 
   @@index([nome])
   @@index([situacao])
@@ -614,9 +633,21 @@ model Estorno {
   valorReferencia             Decimal? @db.Decimal(18, 2)
   criadoEm                    DateTime @default(now())
 
-  cota Cota @relation(fields: [cotaId], references: [id])
+  /// Qual dos dois tipos gerou este estorno.
+  tipo TipoEstorno @default(RECUPERACAO)
+  /// Regra vigente aplicada e o percentual dela, congelados no momento da
+  /// apuração. Alterar a regra depois não reescreve este valor.
+  regraEstornoId     String?
+  percentualAplicado Decimal? @db.Decimal(9, 4)
+  parcelaLimite      Int?
+  /// valorReferencia × percentualAplicado.
+  valorEstorno       Decimal? @db.Decimal(18, 2)
+
+  cota  Cota          @relation(fields: [cotaId], references: [id])
+  regra RegraEstorno? @relation(fields: [regraEstornoId], references: [id])
 
   @@index([dataCancelamento])
+  @@index([tipo, dataCancelamento])
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,4 +1124,110 @@ model ConfiguracaoSistema {
   valor        Json
   descricao    String?
   atualizadoEm DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Eventos de domínio — outbox transacional
+//
+// O evento é gravado na MESMA transação do fato que o originou. Ou os dois
+// existem, ou nenhum existe: é o que impede o cenário em que a venda é gravada
+// e a comissão nunca é calculada porque o processo caiu no meio.
+//
+// O despachante lê o outbox depois do commit, entrega a cada handler inscrito e
+// registra a entrega em `EventoEntrega`. Reprocessar é seguro por construção.
+// ---------------------------------------------------------------------------
+
+model EventoDominio {
+  id String @id @default(cuid())
+
+  /// Nome no padrão `contexto.agregado.fato`, sempre no passado.
+  /// Ex.: `carteira.cota.cancelada`.
+  tipo String
+  /// Versão do formato do payload. Permite evoluir o contrato sem reescrever
+  /// eventos antigos — handler antigo continua lendo o que entende.
+  versao Int @default(1)
+
+  agregado   String
+  agregadoId String
+
+  payload Json
+  /// Rastro: usuário, IP, importação de origem, id de correlação.
+  metadados Json?
+
+  /// Quando o FATO aconteceu (não quando a linha foi gravada).
+  ocorridoEm DateTime @default(now())
+
+  status             StatusEvento @default(PENDENTE)
+  tentativas         Int          @default(0)
+  proximaTentativaEm DateTime?
+  ultimoErro         String?
+  processadoEm       DateTime?
+
+  entregas EventoEntrega[]
+
+  // Fila do despachante: só o que está pendente e já venceu o backoff.
+  @@index([status, proximaTentativaEm])
+  @@index([tipo, ocorridoEm])
+  @@index([agregado, agregadoId])
+  @@index([ocorridoEm])
+}
+
+/// Entrega de um evento a um handler específico.
+///
+/// A unicidade `(eventoId, handler)` é a idempotência do sistema: o mesmo
+/// evento nunca é aplicado duas vezes pelo mesmo handler, mesmo com retry,
+/// reimportação ou processo duplicado.
+model EventoEntrega {
+  id       String @id @default(cuid())
+  eventoId String
+  handler  String
+
+  status      StatusEvento @default(PENDENTE)
+  tentativas  Int          @default(0)
+  erro        String?
+  duracaoMs   Int?
+  criadoEm    DateTime     @default(now())
+  concluidoEm DateTime?
+
+  evento EventoDominio @relation(fields: [eventoId], references: [id], onDelete: Cascade)
+
+  @@unique([eventoId, handler])
+  @@index([status, handler])
+}
+
+// ---------------------------------------------------------------------------
+// Regras de estorno — parametrizadas
+//
+// Substitui a constante `PARCELA_LIMITE_ESTORNO = 6` que vivia no código.
+// Cada vendedor pode ter percentual e limite próprios, com vigência: alterar a
+// regra hoje não reescreve o estorno já apurado ontem.
+// ---------------------------------------------------------------------------
+
+model RegraEstorno {
+  id String @id @default(cuid())
+
+  /// Documento dono da regra. Nulo = regra padrão da WR, usada quando o
+  /// documento não tem regra própria vigente.
+  vendedorId String?
+  tipo       TipoEstorno
+
+  /// Cancelamento com parcelas pagas ABAIXO deste número gera estorno.
+  /// Zero desliga o estorno para o caso.
+  parcelaLimite Int
+  /// Percentual do valor de referência a estornar.
+  percentual    Decimal @db.Decimal(9, 4)
+
+  vigenteDe  DateTime  @db.Date
+  vigenteAte DateTime? @db.Date
+
+  observacoes String?
+  usuarioId   String?
+  criadoEm    DateTime @default(now())
+
+  vendedor Vendedor? @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario?  @relation(fields: [usuarioId], references: [id])
+  estornos Estorno[]
+
+  @@index([vendedorId, tipo, vigenteDe])
+  @@index([tipo, vigenteDe])
 }
