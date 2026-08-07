@@ -679,12 +679,19 @@ fase entrega valor sozinha.
 - [x] Ação de promover, com os dois degraus se comportando de forma diferente
 - [x] Alerta de venda em documento que não recebe mais venda nova
 
-### Fase 4 — Eventos na importação *(parcial)*
+### Fase 4 — Eventos na importação ✅
 - [x] Base CSV publica `cota.criada`, `cota.alterada`, `cota.cancelada`, `cota.contemplada`
 - [x] Handler de estorno consome e apura pela regra vigente
-- [ ] CV056E, CV069E e GC070A ainda calculam direto
-- [ ] Aposentadoria do recálculo por varredura (`apurarComissoesEquipe` ainda varre tudo)
+- [x] CV056E publica `comissao.registrada` e `cota.parcela_paga`
+- [x] GC070A publica `bonus.rateado`
+- [x] **Fim da varredura na importação:** o reapuramento recebe só as cotas que
+      o arquivo tocou. Recálculo por mudança de tabela segue completo, e deve
+      seguir — mudar percentual afeta tudo que foi apurado com ele.
 - [ ] Rota de manutenção que recolhe eventos pendentes fora da importação
+
+> **CV069E não publica evento, de propósito.** Nenhum handler reagiria a ele: o
+> valor é lido sob demanda pelo cálculo do estorno. Evento sem consumidor é
+> cerimônia, e cerimônia é o que faz arquitetura apodrecer.
 
 ### Fase 5 — Os seis módulos *(não iniciada)*
 - [ ] Reorganização das rotas e da navegação

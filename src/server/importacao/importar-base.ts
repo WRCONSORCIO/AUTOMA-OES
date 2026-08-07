@@ -75,6 +75,11 @@ export async function importarBaseCsv(
     },
   });
 
+  // Cotas que esta importação criou ou alterou. É o escopo do reapuramento:
+  // sem ele, cada importação reapura a base inteira, e o custo passa a crescer
+  // com o tamanho do histórico em vez de com o tamanho do arquivo.
+  const cotasTocadas = new Set<string>();
+
   const contadores = {
     criados: 0,
     atualizados: 0,
@@ -138,6 +143,7 @@ export async function importarBaseCsv(
         usuario: entrada.usuario,
         cache,
         contadores,
+        cotasTocadas,
         erros: leitura.erros.length,
       });
     }
@@ -145,9 +151,15 @@ export async function importarBaseCsv(
     const status = contadores.erros > 0 ? "CONCLUIDA_COM_ERROS" : "CONCLUIDA";
 
     // Vendas novas ou com crédito/flex alterados mudam a comissão da equipe.
+    // Reapura SÓ o que este arquivo tocou: cota que não mudou não tem por que
+    // ser recalculada, e o resultado seria idêntico ao que já está gravado.
+    //
     // Roda ANTES do despacho porque o estorno é calculado sobre a comissão já
     // apurada — inverter a ordem faria o estorno usar uma base desatualizada.
-    const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+    const equipe = await apurarComissoesEquipe({
+      cotaIds: [...cotasTocadas],
+      registrarAuditoria: false,
+    });
 
     // Processa a fila aqui, e não em segundo plano, para que os estornos já
     // estejam calculados quando o usuário vir o resumo. O que falhar fica
@@ -229,6 +241,7 @@ interface ContextoLote {
   administradoraId: string;
   usuario: ContextoUsuario;
   cache: CacheVendedores;
+  cotasTocadas: Set<string>;
   contadores: {
     criados: number;
     atualizados: number;
@@ -459,6 +472,7 @@ async function criarCota(
     }
 
     await publicar(tx, eventos);
+    ctx.cotasTocadas.add(cota.id);
   });
 
   ctx.contadores.criados += 1;
@@ -566,6 +580,7 @@ async function atualizarCota(
     }
 
     await publicar(tx, eventos);
+    ctx.cotasTocadas.add(existente.id);
   });
 
   ctx.contadores.atualizados += 1;

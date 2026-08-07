@@ -19,6 +19,13 @@ import { registrarAuditoria } from "@/server/services/auditoria";
 import { apurarComissoesEquipe } from "@/server/services/comissao-equipe";
 import { conferirFormulario, FORMULARIOS } from "./formularios";
 import { lerPdfComissao, type RegistroComissaoPdf } from "./pdf-comissao";
+import {
+  evento,
+  type MetadadosEvento,
+  type NovoEvento,
+} from "@/shared/events/catalogo";
+import { publicar } from "@/shared/events/outbox-prisma";
+import { drenarEventos } from "@/shared/events/handlers";
 
 const TAMANHO_LOTE = 100;
 
@@ -69,6 +76,9 @@ export async function importarComissaoPdf(
     },
   });
 
+  // Cotas mencionadas por este relatório. É o escopo do reapuramento.
+  const cotasTocadas = new Set<string>();
+
   const contadores = {
     criados: 0,
     duplicados: 0,
@@ -115,6 +125,12 @@ export async function importarComissaoPdf(
             administradoraId: entrada.administradoraId,
             hashArquivo,
             cache,
+            metadados: {
+              usuarioId: entrada.usuario.id,
+              usuarioNome: entrada.usuario.nome,
+              importacaoId: importacao.id,
+              correlacaoId: importacao.id,
+            },
           });
 
           if (resultado.duplicado) {
@@ -124,6 +140,7 @@ export async function importarComissaoPdf(
 
           contadores.criados += 1;
           valorComissaoRelatorio += registro.valorComissao;
+          if (resultado.cotaId) cotasTocadas.add(resultado.cotaId);
           if (!resultado.cotaVinculada) contadores.semCotaVinculada += 1;
           if (!resultado.categoria) contadores.semCategoria += 1;
           if (resultado.comissaoWr !== null) {
@@ -147,8 +164,17 @@ export async function importarComissaoPdf(
 
     const status = contadores.erros > 0 ? "CONCLUIDA_COM_ERROS" : "CONCLUIDA";
 
-    // Cada parcela recebida libera a comissão da equipe: reapura na sequência.
-    const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+    // Cada parcela recebida libera a comissão da equipe: reapura na sequência,
+    // mas SÓ das cotas que este relatório mencionou. As demais não tiveram
+    // parcela nova e o recálculo delas devolveria exatamente o que já está
+    // gravado — a um custo que cresce com o histórico, não com o arquivo.
+    const equipe = await apurarComissoesEquipe({
+      cotaIds: [...cotasTocadas],
+      registrarAuditoria: false,
+    });
+
+    // Fecha a fila antes de o usuário ver o resumo, como na base.
+    const eventos = await drenarEventos();
 
     await prisma.importacao.update({
       where: { id: importacao.id },
@@ -160,6 +186,11 @@ export async function importarComissaoPdf(
         qtdDuplicados: contadores.duplicados,
         qtdErros: contadores.erros,
         resumo: {
+          eventos: {
+            processados: eventos.eventos,
+            entregas: eventos.entregasOk,
+            falhas: eventos.eventosComFalha,
+          },
           paginas: leitura.paginas,
           dataEmissao: leitura.dataEmissao?.toISOString() ?? null,
           totaisRelatorio: { ...leitura.totais },
@@ -221,11 +252,14 @@ interface EntradaGravacao {
   administradoraId: string;
   hashArquivo: string;
   cache: CacheVendedores;
+  metadados: MetadadosEvento;
 }
 
 interface ResultadoGravacao {
   duplicado: boolean;
   cotaVinculada: boolean;
+  /** Cota atingida pelo lançamento, quando o cruzamento encontrou uma. */
+  cotaId: string | null;
   categoria: CategoriaVendedor | null;
   comissaoWr: number | null;
 }
@@ -250,7 +284,13 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
     select: { id: true },
   });
   if (jaImportado) {
-    return { duplicado: true, cotaVinculada: false, categoria: null, comissaoWr: null };
+    return {
+      duplicado: true,
+      cotaVinculada: false,
+      cotaId: null,
+      categoria: null,
+      comissaoWr: null,
+    };
   }
 
   const cota = await localizarCota(entrada.administradoraId, registro);
@@ -320,7 +360,11 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
 
   const modalidadeFlex = await localizarModalidadeFlex(registro.percentualFlex);
 
-  await prisma.comissaoRegistro.create({
+  // O registro e os eventos entram na MESMA transação. Sem isso, o processo
+  // caindo entre as duas escritas deixaria a parcela gravada e a liberação da
+  // comissão nunca calculada — o mesmo buraco que o outbox veio fechar na base.
+  await prisma.$transaction(async (tx) => {
+    const gravado = await tx.comissaoRegistro.create({
     data: {
       importacaoId: entrada.importacaoId,
       administradoraId: entrada.administradoraId,
@@ -393,11 +437,52 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
             },
           },
     },
+      select: { id: true },
+    });
+
+    const eventos: NovoEvento[] = [
+      evento(
+        "apuracao.comissao.registrada",
+        "ComissaoRegistro",
+        gravado.id,
+        {
+          comissaoRegistroId: gravado.id,
+          cotaId: cota?.id ?? null,
+          vendedorId: efetivo.vendedorId,
+          parcela: registro.parcela,
+        },
+        entrada.metadados,
+      ),
+    ];
+
+    // Pagamento de parcela é o que libera a comissão prevista da equipe. Só o
+    // lançamento de pagamento conta: inclusão e cancelamento de plano são
+    // outros fatos, e tratá-los como parcela recebida liberaria dinheiro que
+    // a administradora não pagou.
+    if (cota && registro.tipo === "PAGAMENTO_COMISSAO") {
+      eventos.push(
+        evento(
+          "carteira.cota.parcela_paga",
+          "Cota",
+          cota.id,
+          {
+            cotaId: cota.id,
+            administradoraId: entrada.administradoraId,
+            parcela: registro.parcela,
+            comissaoRegistroId: gravado.id,
+          },
+          entrada.metadados,
+        ),
+      );
+    }
+
+    await publicar(tx, eventos);
   });
 
   return {
     duplicado: false,
     cotaVinculada: cota !== null,
+    cotaId: cota?.id ?? null,
     categoria,
     comissaoWr: calculo.aplicavel ? calculo.valor : null,
   };
