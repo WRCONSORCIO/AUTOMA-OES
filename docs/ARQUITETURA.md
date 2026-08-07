@@ -558,28 +558,31 @@ janela de inconsistência.
 Ordem escolhida para que o sistema **nunca fique quebrado** entre etapas. Cada
 fase entrega valor sozinha.
 
-### Fase 1 — Fundação *(em andamento)*
+### Fase 1 — Fundação ✅
 - [x] Modelagem do domínio, ER, arquitetura, pastas *(este documento)*
-- [ ] Shared kernel: `Dinheiro`, `Vigencia`, `DomainEvent`, `Result`
-- [ ] Outbox + barramento + dispatcher + registry
-- [ ] Auditoria como preocupação transversal
+- [x] Shared kernel: `dinheiro`, `periodo`, `resultado`
+- [x] Outbox transacional + barramento + despachante + registro
+- [x] Rateio que fecha ao centavo
 
-### Fase 2 — Parametrização (mata R8)
-- [ ] `RegraEstorno` com os dois tipos, percentual por documento, vigência
-- [ ] Remoção de `PARCELA_LIMITE_ESTORNO` e demais constantes
-- [ ] Tela de configuração das regras
+### Fase 2 — Parametrização (mata R8) *(em andamento)*
+- [x] `RegraEstorno` com os dois tipos, percentual por vendedor, vigência
+- [x] Remoção de `PARCELA_LIMITE_ESTORNO`, com equivalência provada em teste
+- [ ] Tela de configuração das regras *(hoje só por SQL / seed)*
+- [ ] Demais constantes de regra ainda no código
 
-### Fase 3 — Comercial por documento (P1)
+### Fase 3 — Comercial por documento (P1) *(bloqueada — depende de P1)*
 - [ ] Migração das vigências de Pessoa → Documento *(backfill não destrutivo)*
 - [ ] Invariante 1 CPF + 2 CNPJ no domínio e no banco
 - [ ] Ficha da pessoa: consolidado + histórico por documento
 
-### Fase 4 — Eventos na importação
-- [ ] Importadores passam a publicar eventos em vez de calcular direto
-- [ ] Handlers de apuração incremental
-- [ ] Aposentadoria do recálculo por varredura
+### Fase 4 — Eventos na importação *(parcial)*
+- [x] Base CSV publica `cota.criada`, `cota.alterada`, `cota.cancelada`, `cota.contemplada`
+- [x] Handler de estorno consome e apura pela regra vigente
+- [ ] CV056E, CV069E e GC070A ainda calculam direto
+- [ ] Aposentadoria do recálculo por varredura (`apurarComissoesEquipe` ainda varre tudo)
+- [ ] Rota de manutenção que recolhe eventos pendentes fora da importação
 
-### Fase 5 — Os seis módulos
+### Fase 5 — Os seis módulos *(não iniciada)*
 - [ ] Reorganização das rotas e da navegação
 - [ ] Projeções e dashboard em tempo real
 - [ ] Filtros inteligentes, busca instantânea
