@@ -226,6 +226,12 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
                   inclui {formatarMoeda(trilha.volumeCancelado)} já cancelado
                 </p>
               ) : null}
+              {trilha.volumeEstornoTotal > 0 ? (
+                <p className="text-xs text-[var(--color-texto-3)]">
+                  fora da conta: {formatarMoeda(trilha.volumeEstornoTotal)} de estorno total
+                  (cancelado antes da assembleia)
+                </p>
+              ) : null}
             </div>
             <div>
               <p className="text-xs text-[var(--color-texto-3)]">Próximo degrau</p>

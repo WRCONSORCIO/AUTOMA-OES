@@ -131,6 +131,21 @@ Consequências que o modelo precisa respeitar:
 CNPJ veterano. É por isso que o consolidado da pessoa não é enfeite de tela: é o
 número que dispara a promoção, e precisa ser confiável.
 
+**Venda cancelada conta. Estorno total, não.** Informado pela WR: o cliente que
+cancela **antes de participar da assembleia** tem a comissão devolvida por
+inteiro, e essa venda "meio que nunca existiu" — fica fora da meta. Já o
+cancelamento comum, depois de a venda ter valido, continua contando.
+
+O arquivo não traz a assembleia, então o fato é reconhecido pelo rastro que
+deixa no dinheiro:
+
+> existe um `CANCELAMENTO DE PLANO` para a cota **e** o líquido dela ficou zero
+> ou negativo.
+
+Exigir o cancelamento — e não apenas o líquido zerado — é o que separa a venda
+devolvida da venda **recém-feita que ainda não gerou comissão nenhuma**. As duas
+somam zero, e só uma delas deixou de existir.
+
 ### 2.3 Quando há estorno
 
 Informado pela WR. Só existem **dois** momentos:

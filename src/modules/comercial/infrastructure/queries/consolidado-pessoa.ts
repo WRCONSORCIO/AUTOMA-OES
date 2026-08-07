@@ -27,10 +27,19 @@ export interface ConsolidadoPessoa {
 
   cotas: number;
   clientes: number;
-  /** Volume vendido da carteira completa. Base da promoção. */
+  /**
+   * Base da promoção: o vendido da carteira completa **descontado o estorno
+   * total**. Venda cancelada continua contando; venda devolvida por inteiro,
+   * não.
+   */
   volumeVendido: number;
-  /** Parte do volume que já foi cancelada, para leitura de qualidade. */
+  /** Parte do volume que já foi cancelada, mas que ainda conta para a meta. */
   volumeCancelado: number;
+  /**
+   * Venda devolvida por inteiro — cancelamento antes da assembleia. Fica de
+   * fora de `volumeVendido` e aparece à parte para ninguém achar que sumiu.
+   */
+  volumeEstornoTotal: number;
 
   estornos: number;
   valorEstornado: number;
@@ -52,6 +61,7 @@ interface LinhaBruta {
   clientes: bigint;
   volumeVendido: Prisma.Decimal;
   volumeCancelado: Prisma.Decimal;
+  volumeEstornoTotal: Prisma.Decimal;
   estornos: bigint;
   valorEstornado: Prisma.Decimal;
   comissaoPrevista: Prisma.Decimal;
@@ -123,15 +133,43 @@ export async function consolidarPessoas(opcoes: {
                  END)                                        AS nivel
       FROM doc GROUP BY pid
     ),
+    -- Estorno total: a venda em que a administradora devolveu TUDO que havia
+    -- pago. É o cliente que cancela antes de participar da assembleia — para
+    -- efeito de meta, é como se a venda nunca tivesse existido.
+    --
+    -- O arquivo não traz a assembleia, então o fato é reconhecido pelo rastro
+    -- que ele deixa no dinheiro: existe um CANCELAMENTO DE PLANO e o líquido
+    -- daquela cota ficou zerado ou negativo.
+    --
+    -- Exigir o cancelamento, e não só o líquido zerado, é o que separa a venda
+    -- devolvida da venda recém-feita que ainda não gerou comissão nenhuma —
+    -- as duas somam zero, e só uma delas deixou de existir.
+    cota_comissao AS (
+      SELECT cr."cotaId"                                     AS cota_id,
+             COALESCE(SUM(cw."valor"), 0)                    AS liquido,
+             BOOL_OR(cr."tipo" = 'CANCELAMENTO_DE_PLANO')    AS teve_cancelamento
+      FROM "ComissaoRegistro" cr
+      LEFT JOIN "ComissaoWr" cw ON cw."comissaoRegistroId" = cr."id"
+      WHERE cr."cotaId" IN (
+        SELECT c."id" FROM doc d JOIN "Cota" c ON c."vendedorEfetivoId" = d.vid
+      )
+      GROUP BY cr."cotaId"
+    ),
     carteira AS (
       SELECT d.pid,
              COUNT(*)                                        AS cotas,
              COUNT(DISTINCT c."cpfCnpjCliente")              AS clientes,
-             COALESCE(SUM(c."valorCredito"), 0)              AS volume,
+             COALESCE(SUM(c."valorCredito")
+                      FILTER (WHERE NOT COALESCE(cc.teve_cancelamento
+                                                 AND cc.liquido <= 0, FALSE)), 0) AS volume,
+             COALESCE(SUM(c."valorCredito")
+                      FILTER (WHERE COALESCE(cc.teve_cancelamento
+                                             AND cc.liquido <= 0, FALSE)), 0) AS estorno_total,
              COALESCE(SUM(c."valorCredito")
                       FILTER (WHERE c.situacao = 'CANCELADO'), 0) AS cancelado
       FROM doc d
       JOIN "Cota" c ON c."vendedorEfetivoId" = d.vid
+      LEFT JOIN cota_comissao cc ON cc.cota_id = c."id"
       GROUP BY d.pid
     ),
     estornos AS (
@@ -170,6 +208,7 @@ export async function consolidarPessoas(opcoes: {
       COALESCE(ca.clientes, 0)              AS "clientes",
       COALESCE(ca.volume, 0)                AS "volumeVendido",
       COALESCE(ca.cancelado, 0)             AS "volumeCancelado",
+      COALESCE(ca.estorno_total, 0)         AS "volumeEstornoTotal",
       COALESCE(es.qtd, 0)                   AS "estornos",
       COALESCE(es.valor, 0)                 AS "valorEstornado",
       COALESCE(co.previsto, 0)              AS "comissaoPrevista",
@@ -199,6 +238,7 @@ export async function consolidarPessoas(opcoes: {
     clientes: Number(linha.clientes),
     volumeVendido: numero(linha.volumeVendido),
     volumeCancelado: numero(linha.volumeCancelado),
+    volumeEstornoTotal: numero(linha.volumeEstornoTotal),
     estornos: Number(linha.estornos),
     valorEstornado: numero(linha.valorEstornado),
     comissaoPrevista: numero(linha.comissaoPrevista),

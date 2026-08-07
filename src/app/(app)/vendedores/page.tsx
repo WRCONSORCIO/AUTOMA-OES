@@ -283,6 +283,11 @@ export default async function PaginaVendedores({
                               faltam {formatarMoeda(linha.consolidado.aptidao.faltam)}
                             </div>
                           ) : null}
+                          {linha.consolidado.volumeEstornoTotal > 0 ? (
+                            <div className="text-xs text-[var(--color-texto-3)]">
+                              −{formatarMoeda(linha.consolidado.volumeEstornoTotal)} estorno total
+                            </div>
+                          ) : null}
                         </>
                       ) : (
                         "—"
