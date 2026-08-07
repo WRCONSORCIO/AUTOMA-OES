@@ -93,6 +93,54 @@ describe("resolução da regra vigente", () => {
   });
 });
 
+/**
+ * A regra antiga (`deveGerarEstorno`, com `PARCELA_LIMITE_ESTORNO = 6`) foi
+ * removida. Estes casos são os mesmos que ela tinha, agora resolvidos pela
+ * regra padrão que a migração semeia — a prova de que a parametrização entrou
+ * sem mudar um centavo do comportamento.
+ */
+describe("equivalência com a regra que era constante no código", () => {
+  // Exatamente o que a migração 20260807100000 grava no banco.
+  const padraoSemeada = regra({
+    id: "regra_estorno_padrao_recuperacao",
+    vendedorId: null,
+    tipo: "RECUPERACAO",
+    parcelaLimite: 6,
+    percentual: 100,
+    vigenteDe: dia("1900-01-01"),
+    vigenteAte: null,
+  });
+
+  const gera = (over: Partial<FatoCancelamento>) =>
+    avaliarEstorno(fato(over), [padraoSemeada]).gera;
+
+  it("cancelamento antes da 6ª parcela gera estorno", () => {
+    expect(gera({ emRecuperacao: true, parcelasPagas: 5, dataCancelamento: dia("2029-04-01") })).toBe(true);
+  });
+
+  it("cancelamento na 6ª parcela não gera estorno", () => {
+    expect(gera({ emRecuperacao: true, parcelasPagas: 6, dataCancelamento: dia("2029-04-01") })).toBe(false);
+  });
+
+  it("venda fora de recuperação nunca gera estorno", () => {
+    // Não existe regra padrão de CANCELAMENTO, e é justamente isso que
+    // preserva o comportamento: hoje só venda de recuperação estorna.
+    expect(gera({ emRecuperacao: false, parcelasPagas: 1, dataCancelamento: dia("2026-09-01") })).toBe(false);
+  });
+
+  it("sem cancelamento não há estorno", () => {
+    expect(gera({ emRecuperacao: true, parcelasPagas: 0, dataCancelamento: null })).toBe(false);
+  });
+
+  it("a regra vale mesmo anos depois da venda", () => {
+    expect(gera({ emRecuperacao: true, parcelasPagas: 3, dataCancelamento: dia("2031-12-20") })).toBe(true);
+  });
+
+  it("cobre cancelamento de venda antiga — a vigência começa em 1900", () => {
+    expect(gera({ emRecuperacao: true, parcelasPagas: 1, dataCancelamento: dia("2019-03-15") })).toBe(true);
+  });
+});
+
 describe("avaliação do estorno", () => {
   it("cancelamento abaixo do limite gera estorno pelo percentual da regra", () => {
     const decisao = avaliarEstorno(fato({ parcelasPagas: 2 }), [regra({ percentual: 100 })]);

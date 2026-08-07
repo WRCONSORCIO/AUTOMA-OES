@@ -7,11 +7,13 @@ import {
   chaveDuplicidade,
   normalizarSegmento,
   chaveIdentidadeCota,
-  deveGerarEstorno,
   hashConteudo,
   montarIdentidadeCota,
   resolverVendedorEfetivo,
 } from "@/server/domain/regras";
+import { evento, type NovoEvento } from "@/shared/events/catalogo";
+import { publicar } from "@/shared/events/outbox-prisma";
+import { drenarEventos } from "@/shared/events/handlers";
 import {
   CacheVendedores,
   garantirVendedorPorDocumento,
@@ -142,7 +144,17 @@ export async function importarBaseCsv(
     const status = contadores.erros > 0 ? "CONCLUIDA_COM_ERROS" : "CONCLUIDA";
 
     // Vendas novas ou com crédito/flex alterados mudam a comissão da equipe.
+    // Roda ANTES do despacho porque o estorno é calculado sobre a comissão já
+    // apurada — inverter a ordem faria o estorno usar uma base desatualizada.
     const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+
+    // Processa a fila aqui, e não em segundo plano, para que os estornos já
+    // estejam calculados quando o usuário vir o resumo. O que falhar fica
+    // pendente e é recolhido depois, sem travar a importação.
+    const eventos = await drenarEventos();
+    contadores.estornosGerados = await prisma.estorno.count({
+      where: { importacaoId: importacao.id },
+    });
 
     await prisma.importacao.update({
       where: { id: importacao.id },
@@ -165,6 +177,11 @@ export async function importarBaseCsv(
             linhas: equipe.linhasGravadas,
             previsto: equipe.valorPrevisto,
             liberado: equipe.valorLiberado,
+          },
+          eventos: {
+            processados: eventos.eventos,
+            entregas: eventos.entregasOk,
+            falhas: eventos.eventosComFalha,
           },
         },
       },
@@ -370,54 +387,81 @@ async function criarCota(
   const agora = new Date();
   const emRecuperacao = recuperacaoId !== null;
 
-  const geraEstorno = deveGerarEstorno({
-    emRecuperacao,
-    parcelasPagas: linha.parcelasPagas,
-    dataCancelamento: linha.dataCancelamento,
-  });
-
   const conteudo = hashConteudo(dados);
 
-  const cota = await prisma.cota.create({
-    data: {
-      ...identidade,
-      ...dados,
-      vendedorAdmId,
-      vendedorEfetivoId: efetivo.vendedorId,
-      origemVendedor: efetivo.origem,
-      categoriaVenda,
-      categoriaVendaFixadaEm: dataVenda ? agora : null,
-      emRecuperacao,
-      recuperacaoId,
-      recuperacaoFixadaEm: emRecuperacao ? agora : null,
-      equipeId: alocacao?.equipeId ?? null,
-      gerenciaId: alocacao?.gerenciaId ?? null,
-      geraEstorno,
-      hashConteudo: conteudo,
-      primeiraImportacaoId: ctx.importacaoId,
-      ultimaImportacaoId: ctx.importacaoId,
-      versoes: {
-        create: {
-          importacaoId: ctx.importacaoId,
-          hashConteudo: conteudo,
-          dados: serializarDados(dados),
+  // A cota e o evento entram na MESMA transação. Sem isso, o processo caindo
+  // entre as duas escritas deixaria a venda gravada e o estorno nunca
+  // calculado — sem erro, sem alerta, e sem ninguém perceber até o fechamento
+  // não bater.
+  await prisma.$transaction(async (tx) => {
+    const cota = await tx.cota.create({
+      data: {
+        ...identidade,
+        ...dados,
+        vendedorAdmId,
+        vendedorEfetivoId: efetivo.vendedorId,
+        origemVendedor: efetivo.origem,
+        categoriaVenda,
+        categoriaVendaFixadaEm: dataVenda ? agora : null,
+        emRecuperacao,
+        recuperacaoId,
+        recuperacaoFixadaEm: emRecuperacao ? agora : null,
+        equipeId: alocacao?.equipeId ?? null,
+        gerenciaId: alocacao?.gerenciaId ?? null,
+        hashConteudo: conteudo,
+        primeiraImportacaoId: ctx.importacaoId,
+        ultimaImportacaoId: ctx.importacaoId,
+        versoes: {
+          create: {
+            importacaoId: ctx.importacaoId,
+            hashConteudo: conteudo,
+            dados: serializarDados(dados),
+          },
         },
       },
-    },
-    select: { id: true },
+      select: { id: true },
+    });
+
+    const eventos: NovoEvento[] = [
+      evento(
+        "carteira.cota.criada",
+        "Cota",
+        cota.id,
+        {
+          cotaId: cota.id,
+          administradoraId: ctx.administradoraId,
+          vendedorEfetivoId: efetivo.vendedorId,
+          dataVenda: dataVenda ? emIso(dataVenda) : null,
+          valorCredito: linha.valorCredito ?? null,
+        },
+        metadadosDe(ctx),
+      ),
+    ];
+
+    if (linha.situacao === "CANCELADO" && linha.dataCancelamento) {
+      eventos.push(
+        eventoCancelamento(cota.id, linha, emRecuperacao, efetivo.vendedorId, ctx),
+      );
+    }
+
+    await publicar(tx, eventos);
   });
 
   ctx.contadores.criados += 1;
   if (linha.situacao === "CANCELADO") ctx.contadores.cancelados += 1;
   if (linha.contemplado) ctx.contadores.contemplados += 1;
-
-  if (geraEstorno && linha.dataCancelamento) {
-    await registrarEstorno(cota.id, linha, ctx);
-  }
 }
 
 async function atualizarCota(
-  existente: { id: string; hashConteudo: string; situacao: string; contemplado: boolean; emRecuperacao: boolean; geraEstorno: boolean },
+  existente: {
+    id: string;
+    hashConteudo: string;
+    situacao: string;
+    contemplado: boolean;
+    emRecuperacao: boolean;
+    geraEstorno: boolean;
+    vendedorEfetivoId: string | null;
+  },
   linha: LinhaBase,
   vendedorAdmId: string | null,
   ctx: ContextoLote,
@@ -437,42 +481,80 @@ async function atualizarCota(
   const virouCancelada = existente.situacao !== "CANCELADO" && linha.situacao === "CANCELADO";
   const virouContemplada = !existente.contemplado && linha.contemplado;
 
-  // A marcação de recuperação é permanente: só pode ser adicionada, nunca removida.
-  const geraEstorno =
-    existente.geraEstorno ||
-    deveGerarEstorno({
-      emRecuperacao: existente.emRecuperacao,
-      parcelasPagas: linha.parcelasPagas,
-      dataCancelamento: linha.dataCancelamento,
-    });
-
-  await prisma.cota.update({
-    where: { id: existente.id },
-    data: {
-      ...dados,
-      // O vendedor da administradora pode ser corrigido por ela; o override
-      // interno da WR continua tendo precedência e não é tocado aqui.
-      vendedorAdmId,
-      geraEstorno,
-      hashConteudo: conteudo,
-      ultimaImportacaoId: ctx.importacaoId,
-      versoes: {
-        create: {
-          importacaoId: ctx.importacaoId,
-          hashConteudo: conteudo,
-          dados: serializarDados(dados),
+  await prisma.$transaction(async (tx) => {
+    await tx.cota.update({
+      where: { id: existente.id },
+      data: {
+        ...dados,
+        // O vendedor da administradora pode ser corrigido por ela; o override
+        // interno da WR continua tendo precedência e não é tocado aqui.
+        vendedorAdmId,
+        hashConteudo: conteudo,
+        ultimaImportacaoId: ctx.importacaoId,
+        versoes: {
+          create: {
+            importacaoId: ctx.importacaoId,
+            hashConteudo: conteudo,
+            dados: serializarDados(dados),
+          },
         },
       },
-    },
+    });
+
+    const eventos: NovoEvento[] = [
+      evento(
+        "carteira.cota.alterada",
+        "Cota",
+        existente.id,
+        {
+          cotaId: existente.id,
+          administradoraId: ctx.administradoraId,
+          alteracoes: {
+            situacao: [existente.situacao, linha.situacao],
+            parcelasPagas: [null, linha.parcelasPagas],
+          },
+        },
+        metadadosDe(ctx),
+      ),
+    ];
+
+    // Só na TRANSIÇÃO para cancelada. Republicar o cancelamento a cada
+    // importação encheria a fila de eventos que o handler descartaria por já
+    // existir estorno — funcionaria, mas transformaria o outbox em lixo.
+    if (virouCancelada && linha.dataCancelamento) {
+      eventos.push(
+        eventoCancelamento(
+          existente.id,
+          linha,
+          existente.emRecuperacao,
+          existente.vendedorEfetivoId,
+          ctx,
+        ),
+      );
+    }
+
+    if (virouContemplada) {
+      eventos.push(
+        evento(
+          "carteira.cota.contemplada",
+          "Cota",
+          existente.id,
+          {
+            cotaId: existente.id,
+            administradoraId: ctx.administradoraId,
+            dataContemplacao: linha.dataContemplacao ? emIso(linha.dataContemplacao) : null,
+          },
+          metadadosDe(ctx),
+        ),
+      );
+    }
+
+    await publicar(tx, eventos);
   });
 
   ctx.contadores.atualizados += 1;
   if (virouCancelada) ctx.contadores.cancelados += 1;
   if (virouContemplada) ctx.contadores.contemplados += 1;
-
-  if (geraEstorno && !existente.geraEstorno && linha.dataCancelamento) {
-    await registrarEstorno(existente.id, linha, ctx);
-  }
 
   // Cota sem override precisa refletir a correção de vendedor da administradora.
   await sincronizarVendedorEfetivo(existente.id, vendedorAdmId);
@@ -506,30 +588,50 @@ async function sincronizarVendedorEfetivo(
   });
 }
 
-async function registrarEstorno(
+/** Data em ISO curto: é assim que o payload do evento guarda dia. */
+function emIso(data: Date): string {
+  return data.toISOString().slice(0, 10);
+}
+
+/** Rastro comum a todo evento desta importação. */
+function metadadosDe(ctx: ContextoLote) {
+  return {
+    usuarioId: ctx.usuario.id,
+    usuarioNome: ctx.usuario.nome,
+    importacaoId: ctx.importacaoId,
+    correlacaoId: ctx.importacaoId,
+  };
+}
+
+/**
+ * O fato "cota cancelada".
+ *
+ * O evento carrega tudo que o handler precisa para decidir o estorno, e nada
+ * além disso. Repare que ele NÃO decide se há estorno: quem decide é a regra
+ * vigente, consultada no momento do processamento. Aqui só se afirma o que a
+ * administradora informou.
+ */
+function eventoCancelamento(
   cotaId: string,
   linha: LinhaBase,
+  emRecuperacao: boolean,
+  vendedorEfetivoId: string | null,
   ctx: ContextoLote,
-): Promise<void> {
-  if (!linha.dataCancelamento) return;
-
-  const jaExiste = await prisma.estorno.findUnique({
-    where: { cotaId },
-    select: { id: true },
-  });
-  if (jaExiste) return;
-
-  await prisma.estorno.create({
-    data: {
+): NovoEvento {
+  return evento(
+    "carteira.cota.cancelada",
+    "Cota",
+    cotaId,
+    {
       cotaId,
-      motivo: `Venda realizada durante recuperação, cancelada com ${linha.parcelasPagas} parcela(s) paga(s) — antes da 6ª parcela.`,
-      parcelasPagasNoCancelamento: linha.parcelasPagas,
-      dataCancelamento: linha.dataCancelamento,
-      valorReferencia: decimalOuNulo(linha.valorCredito),
+      administradoraId: ctx.administradoraId,
+      vendedorEfetivoId,
+      dataCancelamento: emIso(linha.dataCancelamento as Date),
+      parcelasPagas: linha.parcelasPagas,
+      emRecuperacao,
     },
-  });
-
-  ctx.contadores.estornosGerados += 1;
+    metadadosDe(ctx),
+  );
 }
 
 function serializarDados(dados: ReturnType<typeof camposMutaveis>): Prisma.InputJsonValue {

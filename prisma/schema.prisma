@@ -643,11 +643,17 @@ model Estorno {
   /// valorReferencia × percentualAplicado.
   valorEstorno       Decimal? @db.Decimal(18, 2)
 
-  cota  Cota          @relation(fields: [cotaId], references: [id])
-  regra RegraEstorno? @relation(fields: [regraEstornoId], references: [id])
+  /// Importação que trouxe o cancelamento. Responde "esta importação gerou
+  /// quais estornos" sem precisar adivinhar por janela de tempo.
+  importacaoId String?
+
+  cota       Cota          @relation(fields: [cotaId], references: [id])
+  regra      RegraEstorno? @relation(fields: [regraEstornoId], references: [id])
+  importacao Importacao?   @relation(fields: [importacaoId], references: [id])
 
   @@index([dataCancelamento])
   @@index([tipo, dataCancelamento])
+  @@index([importacaoId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1065,7 @@ model Importacao {
   erros     ImportacaoErro[]
   versoes   CotaVersao[]
   comissoes ComissaoRegistro[]
+  estornos  Estorno[]
 
   @@index([tipo, iniciadoEm])
   @@index([status])

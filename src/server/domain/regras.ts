@@ -114,28 +114,15 @@ export function encontrarRecuperacaoNaData(
 
 // ---------------------------------------------------------------------------
 // REGRA: estorno
+//
+// Mudou de lugar. O limite de parcelas era a constante `PARCELA_LIMITE_ESTORNO`
+// aqui, o que fazia dele regra de negócio escrita em código: alterar exigia
+// deploy, e alterar reescrevia retroativamente o julgamento de cancelamentos
+// antigos.
+//
+// Hoje a regra vive em `RegraEstorno`, com vigência e percentual por vendedor,
+// e a decisão está em `src/modules/apuracao/domain/rules/estorno.ts`.
 // ---------------------------------------------------------------------------
-
-/** Parcela a partir da qual o cancelamento deixa de gerar estorno. */
-export const PARCELA_LIMITE_ESTORNO = 6;
-
-export interface EntradaEstorno {
-  /** Marcação permanente de venda realizada durante recuperação. */
-  emRecuperacao: boolean;
-  /** Quantidade de parcelas pagas na data do cancelamento. */
-  parcelasPagas: number;
-  dataCancelamento: Date | null;
-}
-
-/**
- * Venda marcada em recuperação que cancela antes da sexta parcela gera estorno
- * — independente de o cancelamento ocorrer anos depois.
- */
-export function deveGerarEstorno(entrada: EntradaEstorno): boolean {
-  if (!entrada.emRecuperacao) return false;
-  if (!entrada.dataCancelamento) return false;
-  return entrada.parcelasPagas < PARCELA_LIMITE_ESTORNO;
-}
 
 // ---------------------------------------------------------------------------
 // REGRA: inclusão de plano é sempre parcela 1
