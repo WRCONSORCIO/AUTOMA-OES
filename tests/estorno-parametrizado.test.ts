@@ -13,7 +13,7 @@ const regra = (over: Partial<RegraEstornoVigente> = {}): RegraEstornoVigente => 
   id: "padrao",
   vendedorId: null,
   tipo: "RECUPERACAO",
-  categoriaVenda: null,
+  categoriasVenda: [],
   parcelaLimite: 6,
   percentual: 100,
   vigenteDe: dia("2024-01-01"),
@@ -107,7 +107,7 @@ describe("equivalência com a regra que era constante no código", () => {
     id: "regra_estorno_padrao_recuperacao",
     vendedorId: null,
     tipo: "RECUPERACAO",
-    categoriaVenda: null,
+    categoriasVenda: [],
     parcelaLimite: 6,
     percentual: 100,
     vigenteDe: dia("1900-01-01"),
@@ -125,9 +125,7 @@ describe("equivalência com a regra que era constante no código", () => {
     expect(gera({ emRecuperacao: true, parcelasPagas: 6, dataCancelamento: dia("2029-04-01") })).toBe(false);
   });
 
-  it("venda fora de recuperação nunca gera estorno", () => {
-    // Não existe regra padrão de CANCELAMENTO, e é justamente isso que
-    // preserva o comportamento: hoje só venda de recuperação estorna.
+  it("sem regra de CANCELAMENTO no conjunto, venda fora de recuperação não estorna", () => {
     expect(gera({ emRecuperacao: false, parcelasPagas: 1, dataCancelamento: dia("2026-09-01") })).toBe(false);
   });
 
@@ -145,17 +143,19 @@ describe("equivalência com a regra que era constante no código", () => {
 });
 
 /**
- * Segundo tipo de estorno, informado pela WR: o cliente cancela com uma parcela
- * paga e o vendedor devolve a comissão — mas SOMENTE nas vendas feitas pelo
- * documento veterano, que é por onde a pessoa opera depois de promovida.
+ * As duas situações de estorno, como a WR as definiu.
+ *
+ * Ambas valem SOMENTE para veterano e expert — as categorias que recebem
+ * direto da administradora. Venda de iniciante é paga pela WR à própria equipe
+ * e nunca é cobrada de volta.
  */
-describe("estorno por cancelamento com uma parcela paga", () => {
+describe("as duas situações de estorno", () => {
   // Exatamente o que a migração 20260807140000 grava no banco.
   const cancelamentoVeterano = regra({
     id: "regra_estorno_padrao_cancelamento_veterano",
     vendedorId: null,
     tipo: "CANCELAMENTO",
-    categoriaVenda: "VETERANO",
+    categoriasVenda: ["VETERANO", "EXPERT"],
     parcelaLimite: 2,
     percentual: 100,
     vigenteDe: dia("1900-01-01"),
@@ -163,7 +163,7 @@ describe("estorno por cancelamento com uma parcela paga", () => {
 
   const recuperacaoPadrao = regra({
     id: "regra_estorno_padrao_recuperacao",
-    categoriaVenda: null,
+    categoriasVenda: ["VETERANO", "EXPERT"],
     vigenteDe: dia("1900-01-01"),
   });
 
@@ -192,21 +192,37 @@ describe("estorno por cancelamento com uma parcela paga", () => {
     expect(fora({ parcelasPagas: 1, categoriaVenda: "INICIANTE" }).gera).toBe(false);
   });
 
-  it("venda de EXPERT não estorna por cancelamento", () => {
-    expect(fora({ parcelasPagas: 1, categoriaVenda: "EXPERT" }).gera).toBe(false);
+  it("venda de EXPERT cancelada com 1 parcela paga também estorna", () => {
+    expect(fora({ parcelasPagas: 1, categoriaVenda: "EXPERT" }).gera).toBe(true);
   });
 
   it("venda sem categoria congelada não estorna — melhor que estornar por suposição", () => {
     expect(fora({ parcelasPagas: 1, categoriaVenda: null }).gera).toBe(false);
   });
 
-  it("a recuperação continua valendo para QUALQUER categoria", () => {
-    const iniciante = avaliarEstorno(
+  it("recuperação de venda INICIANTE NÃO estorna — a WR paga essa comissão, não cobra de volta", () => {
+    const decisao = avaliarEstorno(
       fato({ emRecuperacao: true, parcelasPagas: 3, categoriaVenda: "INICIANTE" }),
       cenario,
     );
-    expect(iniciante.gera).toBe(true);
-    if (iniciante.gera) expect(iniciante.tipo).toBe("RECUPERACAO");
+    expect(decisao.gera).toBe(false);
+  });
+
+  it("recuperação de venda VETERANA estorna", () => {
+    const decisao = avaliarEstorno(
+      fato({ emRecuperacao: true, parcelasPagas: 3, categoriaVenda: "VETERANO" }),
+      cenario,
+    );
+    expect(decisao.gera).toBe(true);
+    if (decisao.gera) expect(decisao.tipo).toBe("RECUPERACAO");
+  });
+
+  it("recuperação de venda EXPERT estorna", () => {
+    const decisao = avaliarEstorno(
+      fato({ emRecuperacao: true, parcelasPagas: 3, categoriaVenda: "EXPERT" }),
+      cenario,
+    );
+    expect(decisao.gera).toBe(true);
   });
 
   it("venda veterana em recuperação usa a regra de recuperação, não a de cancelamento", () => {
@@ -222,10 +238,10 @@ describe("estorno por cancelamento com uma parcela paga", () => {
 });
 
 describe("precedência entre vendedor e categoria", () => {
-  const geral = regra({ id: "geral", vendedorId: null, categoriaVenda: null, percentual: 100 });
-  const porCategoria = regra({ id: "por-categoria", vendedorId: null, categoriaVenda: "VETERANO", percentual: 80 });
-  const porVendedor = regra({ id: "por-vendedor", vendedorId: "vend-1", categoriaVenda: null, percentual: 60 });
-  const porAmbos = regra({ id: "por-ambos", vendedorId: "vend-1", categoriaVenda: "VETERANO", percentual: 40 });
+  const geral = regra({ id: "geral", vendedorId: null, categoriasVenda: [], percentual: 100 });
+  const porCategoria = regra({ id: "por-categoria", vendedorId: null, categoriasVenda: ["VETERANO"], percentual: 80 });
+  const porVendedor = regra({ id: "por-vendedor", vendedorId: "vend-1", categoriasVenda: [], percentual: 60 });
+  const porAmbos = regra({ id: "por-ambos", vendedorId: "vend-1", categoriasVenda: ["VETERANO"], percentual: 40 });
 
   const escolher = (regras: RegraEstornoVigente[]) =>
     resolverRegra(regras, "RECUPERACAO", "vend-1", dia("2025-06-10"), "VETERANO")?.id;

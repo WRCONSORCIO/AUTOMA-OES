@@ -21,7 +21,7 @@ export interface EstadoAcao {
  */
 const esquema = z.object({
   tipo: z.enum(["CANCELAMENTO", "RECUPERACAO"]),
-  categoriaVenda: z.enum(["INICIANTE", "VETERANO", "EXPERT"]).nullable(),
+  categoriasVenda: z.array(z.enum(["INICIANTE", "VETERANO", "EXPERT"])),
   vendedorId: z.string().min(1).nullable(),
   parcelaLimite: z.number().int().min(0).max(200),
   percentual: z.number().min(0).max(100),
@@ -56,7 +56,7 @@ export async function acaoSalvarRegraEstorno(
 
   const analise = esquema.safeParse({
     tipo: String(formData.get("tipo") ?? ""),
-    categoriaVenda: textoOuNulo(formData.get("categoriaVenda")),
+    categoriasVenda: formData.getAll("categoriasVenda").map(String).filter(Boolean),
     vendedorId: textoOuNulo(formData.get("vendedorId")),
     parcelaLimite: Number(limiteBruto),
     percentual,

@@ -27,7 +27,7 @@ export async function regrasDoVendedor(
       id: true,
       vendedorId: true,
       tipo: true,
-      categoriaVenda: true,
+      categoriasVenda: true,
       parcelaLimite: true,
       percentual: true,
       vigenteDe: true,

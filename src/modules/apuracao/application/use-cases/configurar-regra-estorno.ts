@@ -15,8 +15,8 @@ import { encerramentoAnterior, inicioDoDia } from "@/shared/domain/periodo";
 
 export interface EntradaRegraEstorno {
   tipo: TipoEstorno;
-  /** Nulo = vale para todas as categorias. */
-  categoriaVenda: CategoriaVendedor | null;
+  /** Vazio = vale para todas as categorias. */
+  categoriasVenda: CategoriaVendedor[];
   /** Nulo = regra padrão da WR. */
   vendedorId: string | null;
   /** Estorna com parcelas pagas ABAIXO deste número. Zero desliga. */
@@ -34,7 +34,7 @@ export interface UsuarioAcao {
 export interface RegraListada {
   id: string;
   tipo: TipoEstorno;
-  categoriaVenda: CategoriaVendedor | null;
+  categoriasVenda: CategoriaVendedor[];
   vendedorId: string | null;
   vendedorNome: string | null;
   parcelaLimite: number;
@@ -56,7 +56,7 @@ export async function listarRegrasEstorno(): Promise<RegraListada[]> {
   return linhas.map((linha) => ({
     id: linha.id,
     tipo: linha.tipo,
-    categoriaVenda: linha.categoriaVenda,
+    categoriasVenda: linha.categoriasVenda,
     vendedorId: linha.vendedorId,
     vendedorNome: linha.vendedor?.nome ?? null,
     parcelaLimite: linha.parcelaLimite,
@@ -88,7 +88,7 @@ export async function salvarRegraEstorno(
     const anteriores = await tx.regraEstorno.findMany({
       where: {
         tipo: entrada.tipo,
-        categoriaVenda: entrada.categoriaVenda,
+        categoriasVenda: { equals: entrada.categoriasVenda },
         vendedorId: entrada.vendedorId,
         vigenteAte: null,
       },
@@ -115,7 +115,7 @@ export async function salvarRegraEstorno(
     const criada = await tx.regraEstorno.create({
       data: {
         tipo: entrada.tipo,
-        categoriaVenda: entrada.categoriaVenda,
+        categoriasVenda: entrada.categoriasVenda,
         vendedorId: entrada.vendedorId,
         parcelaLimite: entrada.parcelaLimite,
         percentual: entrada.percentual,
@@ -133,7 +133,7 @@ export async function salvarRegraEstorno(
         entidadeId: criada.id,
         descricao:
           `Regra de estorno ${entrada.tipo}` +
-          `${entrada.categoriaVenda ? ` (${entrada.categoriaVenda})` : ""}` +
+          `${entrada.categoriasVenda.length ? ` (${entrada.categoriasVenda.join(", ")})` : ""}` +
           `${entrada.vendedorId ? " para vendedor específico" : " padrão"}: ` +
           `${entrada.percentual}% abaixo de ${entrada.parcelaLimite} parcela(s), ` +
           `a partir de ${vigenteDe.toISOString().slice(0, 10)}`,

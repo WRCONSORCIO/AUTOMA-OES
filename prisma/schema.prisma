@@ -1218,12 +1218,14 @@ model RegraEstorno {
   vendedorId String?
   tipo       TipoEstorno
 
-  /// Categoria da VENDA a que a regra se aplica. Nulo = todas.
+  /// Categorias da VENDA a que a regra se aplica. Vazio = todas.
   ///
-  /// Existe porque o estorno por cancelamento só vale para venda feita pelo
-  /// documento veterano — é por ele que a pessoa opera depois de promovida.
-  /// Sem esta coluna, a única forma de expressar isso seria em código.
-  categoriaVenda CategoriaVendedor?
+  /// É lista, e não um valor só, porque as duas situações de estorno valem para
+  /// veterano E expert — quem recebe direto da administradora. Guardar isso em
+  /// duas linhas separadas convidaria ao pior erro possível: alterar o
+  /// percentual de uma e esquecer a outra, deixando o sistema cobrando valores
+  /// diferentes para a mesma regra de negócio.
+  categoriasVenda CategoriaVendedor[]
 
   /// Cancelamento com parcelas pagas ABAIXO deste número gera estorno.
   /// Zero desliga o estorno para o caso.
@@ -1243,5 +1245,5 @@ model RegraEstorno {
   estornos Estorno[]
 
   @@index([vendedorId, tipo, vigenteDe])
-  @@index([tipo, categoriaVenda, vigenteDe])
+  @@index([tipo, vigenteDe])
 }

@@ -24,12 +24,13 @@ export interface RegraEstornoVigente extends ComVigencia {
   readonly vendedorId: string | null;
   readonly tipo: TipoEstorno;
   /**
-   * Categoria da venda a que a regra se aplica. Nulo = todas.
+   * Categorias da venda a que a regra se aplica. Vazio = todas.
    *
-   * O estorno por cancelamento só vale para venda do documento veterano, que é
-   * por onde a pessoa opera depois de promovida.
+   * As duas situações de estorno valem para veterano e expert — as categorias
+   * que recebem direto da administradora. Venda de iniciante é paga pela WR e
+   * não é cobrada de volta.
    */
-  readonly categoriaVenda: CategoriaVenda | null;
+  readonly categoriasVenda: readonly CategoriaVenda[];
   /**
    * Cancelamento com parcelas pagas ABAIXO deste número gera estorno.
    * Zero desliga o estorno para o caso — é como se configura "este vendedor
@@ -106,16 +107,17 @@ export function resolverRegra(
     (regra) =>
       regra.tipo === tipo &&
       (regra.vendedorId === null || regra.vendedorId === vendedorId) &&
-      // Regra de categoria específica exige que a venda TENHA aquela
-      // categoria. Venda sem categoria congelada só casa com regra geral —
-      // é melhor não estornar do que estornar por suposição.
-      (regra.categoriaVenda === null || regra.categoriaVenda === categoriaVenda),
+      // Regra com categorias declaradas exige que a venda TENHA uma delas.
+      // Venda sem categoria congelada só casa com regra geral — é melhor não
+      // estornar do que estornar por suposição.
+      (regra.categoriasVenda.length === 0 ||
+        (categoriaVenda !== null && regra.categoriasVenda.includes(categoriaVenda))),
   );
 
   const porVendedor = candidatas.filter((regra) => regra.vendedorId !== null);
   const padrao = candidatas.filter((regra) => regra.vendedorId === null);
   const especificaDaCategoria = (regra: RegraEstornoVigente) =>
-    regra.categoriaVenda !== null;
+    regra.categoriasVenda.length > 0;
 
   return (
     resolverVigentePorPrecedencia(porVendedor, data, especificaDaCategoria) ??

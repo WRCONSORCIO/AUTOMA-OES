@@ -123,9 +123,10 @@ Consequências que o modelo precisa respeitar:
 5. **A categoria da venda continua congelada.** Promover não reescreve nada do
    que já foi vendido.
 
-> **Em aberto:** o acumulado de R$ 30 mi é da carreira inteira (CPF + CNPJ) ou
-> só do que foi vendido pelo CNPJ veterano? Muda quando a promoção dispara.
-> Precisa ser respondido antes de implementar a promoção automática.
+**Os limites contam a carteira completa.** Informado pela WR: o acumulado é de
+**todas as vendas da pessoa**, somando os documentos — não só o que passou pelo
+CNPJ veterano. É por isso que o consolidado da pessoa não é enfeite de tela: é o
+número que dispara a promoção, e precisa ser confiável.
 
 ### 2.3 Quando há estorno
 
@@ -133,8 +134,13 @@ Informado pela WR. Só existem **dois** momentos:
 
 | Situação | Limite | Categorias | Estado |
 |---|---|---|---|
-| Venda feita em **recuperação** | abaixo de 6 parcelas pagas | todas | Configurado |
-| Cliente cancela com **uma parcela paga** | abaixo de 2 parcelas pagas | **só Veterano** | Configurado |
+| Venda feita em **recuperação** | abaixo de 6 parcelas pagas | Veterano + Expert | Configurado |
+| Cliente cancela com **uma parcela paga** | abaixo de 2 parcelas pagas | Veterano + Expert | Configurado |
+
+**Iniciante nunca estorna.** Não é exceção: é a mecânica do negócio. Veterano e
+Expert recebem direto da administradora, e é esse dinheiro que volta. A comissão
+de Iniciante é a WR que paga à própria equipe — e a WR não cobra de volta o que
+ela mesma pagou.
 
 Fora desses dois casos não se cobra nada do vendedor.
 

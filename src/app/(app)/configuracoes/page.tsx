@@ -76,6 +76,7 @@ export default async function PaginaConfiguracoes({
   const dia = (data: Date | null) => (data ? data.toISOString().slice(0, 10) : null);
   const regrasView = regrasEstorno.map((regra) => ({
     ...regra,
+    categoriasVenda: regra.categoriasVenda as string[],
     vigenteDe: dia(regra.vigenteDe) as string,
     vigenteAte: dia(regra.vigenteAte),
   }));

@@ -8,7 +8,7 @@ import { acaoEncerrarRegraEstorno, acaoSalvarRegraEstorno } from "./estorno-acoe
 export interface RegraEstornoView {
   id: string;
   tipo: "CANCELAMENTO" | "RECUPERACAO";
-  categoriaVenda: string | null;
+  categoriasVenda: string[];
   vendedorId: string | null;
   vendedorNome: string | null;
   parcelaLimite: number;
@@ -28,6 +28,12 @@ const ROTULO_TIPO: Record<string, string> = {
   RECUPERACAO: "Venda em recuperação",
   CANCELAMENTO: "Cancelamento",
 };
+
+const CATEGORIAS = [
+  { valor: "INICIANTE", rotulo: "Iniciante" },
+  { valor: "VETERANO", rotulo: "Veterano" },
+  { valor: "EXPERT", rotulo: "Expert" },
+] as const;
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 
@@ -64,17 +70,26 @@ export function FormularioRegraEstorno({
           </Selecao>
         </Campo>
 
-        <Campo
-          rotulo="Categoria da venda"
-          dica="Vazio vale para todas as categorias."
-        >
-          <Selecao name="categoriaVenda" defaultValue={regra?.categoriaVenda ?? ""}>
-            <option value="">Todas</option>
-            <option value="INICIANTE">Iniciante</option>
-            <option value="VETERANO">Veterano</option>
-            <option value="EXPERT">Expert</option>
-          </Selecao>
-        </Campo>
+        <fieldset className="flex flex-col gap-1.5 text-sm">
+          <legend className="font-medium">Categorias da venda</legend>
+          <p className="text-xs text-[var(--color-texto-3)]">
+            Nenhuma marcada vale para todas.
+          </p>
+          <div className="flex flex-wrap gap-3 pt-1">
+            {CATEGORIAS.map((categoria) => (
+              <label key={categoria.valor} className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  name="categoriasVenda"
+                  value={categoria.valor}
+                  defaultChecked={regra?.categoriasVenda.includes(categoria.valor)}
+                  className="size-4 accent-[var(--color-marca)]"
+                />
+                {categoria.rotulo}
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <Campo
           rotulo="Vendedor"
@@ -176,7 +191,9 @@ export function LinhaRegraEstorno({
           {regra.vigente ? "Vigente" : "Encerrada"}
         </Badge>
         <Badge tom="neutro">
-          {regra.categoriaVenda ? regra.categoriaVenda : "Todas as categorias"}
+          {regra.categoriasVenda.length > 0
+            ? regra.categoriasVenda.join(" + ")
+            : "Todas as categorias"}
         </Badge>
         <Badge tom={regra.vendedorId ? "atencao" : "neutro"}>
           {regra.vendedorNome ?? "Padrão da WR"}
