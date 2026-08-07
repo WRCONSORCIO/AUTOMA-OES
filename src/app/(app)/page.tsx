@@ -8,9 +8,11 @@ import {
   TrendingDown,
   Users,
   TrendingUp,
+  TriangleAlert,
 } from "lucide-react";
 import { exigirPermissao } from "@/server/auth/session";
 import { aptosParaPromocao } from "@/modules/comercial/application/use-cases/aptos-promocao";
+import { contarVendasForaDoDocumento } from "@/modules/comercial/infrastructure/queries/vendas-fora-do-documento";
 import { escopoDoUsuario } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import {
@@ -49,6 +51,7 @@ export default async function PaginaDashboard({
   const [
     indicadores,
     aptos,
+    vendasForaDoDocumento,
     serie,
     rankingVendedores,
     rankingEquipes,
@@ -62,6 +65,9 @@ export default async function PaginaDashboard({
     // A fila de promoção não olha o período do filtro: a meta é sobre a
     // carteira inteira da pessoa, não sobre o mês que está sendo consultado.
     aptosParaPromocao({ gerenciaId: escopo.gerenciaId, equipeId: escopo.equipeId }),
+    // Também ignora o período: a anomalia não deixa de existir porque o
+    // usuário está olhando outro mês.
+    contarVendasForaDoDocumento({ gerenciaId: escopo.gerenciaId, equipeId: escopo.equipeId }),
     carregarSerieMensal({ ...filtro, de: undefined, ate: undefined }, escopo),
     carregarRanking("pessoaId", filtro, escopo, 10),
     carregarRanking("equipeId", filtro, escopo, 10),
@@ -156,6 +162,17 @@ export default async function PaginaDashboard({
           }
           icone={<TrendingUp className="h-4 w-4" />}
           tom={aptos.length > 0 ? "bom" : "neutro"}
+        />
+        <Indicador
+          rotulo="Venda em documento fechado"
+          valor={formatarNumero(vendasForaDoDocumento)}
+          detalhe={
+            vendasForaDoDocumento > 0
+              ? "Data da promoção errada, ou venda pelo documento errado"
+              : "Nenhuma venda entrou em documento já promovido"
+          }
+          icone={<TriangleAlert className="h-4 w-4" />}
+          tom={vendasForaDoDocumento > 0 ? "critico" : "neutro"}
         />
         <Indicador
           rotulo="Vendas em recuperação"

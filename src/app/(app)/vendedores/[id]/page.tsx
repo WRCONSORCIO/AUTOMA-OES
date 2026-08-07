@@ -32,6 +32,7 @@ import { Indicador } from "@/components/indicador";
 import { carregarFichaPessoa } from "@/server/services/pessoas";
 import { avaliarPessoas } from "@/modules/comercial/application/use-cases/aptos-promocao";
 import { Promover } from "./promover";
+import { vendasForaDoDocumento } from "@/modules/comercial/infrastructure/queries/vendas-fora-do-documento";
 import { carregarComissoesDaPessoa } from "@/server/services/comissao-equipe";
 import { PainelVendedor } from "./painel";
 import { BotaoSeparar } from "../../vinculos/formularios";
@@ -85,6 +86,7 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
     gerencias,
     comissoesEquipe,
     aptidaoDaPessoa,
+    foraDoDocumento,
   ] = await Promise.all([
     prisma.cota.aggregate({
       where: { vendedorEfetivoId: { in: documentosDaPessoa } },
@@ -112,6 +114,9 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
     // A trilha é da PESSOA: soma a carteira de todos os documentos dela.
     vendedor.pessoa
       ? avaliarPessoas({ pessoaIds: [vendedor.pessoa.id], limite: 1 })
+      : Promise.resolve([]),
+    vendedor.pessoa
+      ? vendasForaDoDocumento({ pessoaId: vendedor.pessoa.id, limite: 50 })
       : Promise.resolve([]),
   ]);
 
@@ -281,6 +286,57 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
               />
             </CardContent>
           ) : null}
+        </Card>
+      ) : null}
+
+      {foraDoDocumento.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Vendas em documento fechado para venda</CardTitle>
+            <p className="text-sm text-[var(--color-texto-2)]">
+              Estas vendas entraram num documento que já havia parado de vender por promoção.
+              Elas <strong>foram gravadas e apuradas normalmente</strong> — a administradora é a
+              fonte da verdade e o fato aconteceu. O que precisa de conferência é o motivo:
+              ou a data da promoção está errada, ou a venda saiu pelo documento errado e está
+              sendo apurada pela categoria errada.
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Tabela>
+              <Cabecalho>
+                <tr>
+                  <Th>Cliente</Th>
+                  <Th>Grupo / Cota</Th>
+                  <Th>Documento que recebeu</Th>
+                  <Th>Fechado em</Th>
+                  <Th>Data da venda</Th>
+                  <Th>Categoria apurada</Th>
+                  <Th className="text-right">Crédito</Th>
+                </tr>
+              </Cabecalho>
+              <tbody>
+                {foraDoDocumento.map((venda) => (
+                  <Tr key={venda.cotaId}>
+                    <Td>{venda.nomeCliente}</Td>
+                    <Td className="numerico whitespace-nowrap">
+                      {venda.grupo}/{venda.cota}
+                    </Td>
+                    <Td className="numerico whitespace-nowrap">
+                      {formatarDocumento(venda.vendedorDocumento)}
+                    </Td>
+                    <Td className="whitespace-nowrap">{formatarData(venda.fechadoEm)}</Td>
+                    <Td className="whitespace-nowrap">
+                      <Badge tom="critico">{formatarData(venda.dataVenda)}</Badge>
+                    </Td>
+                    <Td>{venda.categoriaVenda ?? "—"}</Td>
+                    <Td className="numerico text-right">
+                      {venda.valorCredito === null ? "—" : formatarMoeda(venda.valorCredito)}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Tabela>
+          </CardContent>
         </Card>
       ) : null}
 

@@ -625,6 +625,21 @@ vigência, resolvida **pela data do fato**.
 **Porquê:** mudar regra não pode exigir deploy, e não pode reescrever o passado.
 **Consequência imediata:** `PARCELA_LIMITE_ESTORNO = 6` sai do código.
 
+### ADR-07 — Alerta derivado, não materializado
+**Contexto:** venda que chega num documento já fechado para venda precisa virar
+alerta.
+**Decisão:** consulta sobre os fatos existentes, sem tabela nem coluna nova.
+**Porquê:** os dois fatos que definem a anomalia — a data da venda e a data em
+que o documento fechou — já estão gravados. Materializar a conclusão criaria um
+terceiro estado para sair de sincronia com os outros dois, e alerta errado é
+pior que alerta nenhum. Derivado, corrigir a data da promoção faz o alerta
+desaparecer sozinho.
+**Custo aceito:** a consulta roda a cada leitura. É barata (índice em
+`vendedorEfetivoId`, filtro por coluna não nula) e só toca cotas de documentos
+promovidos, que são poucos.
+**Quando reavaliar:** se o volume de documentos promovidos crescer a ponto de a
+contagem pesar no Dashboard, ela vira projeção — sem mudar a regra.
+
 ### ADR-06 — Idempotência por construção
 **Contexto:** reprocessamento é normal (retry, reimportação, correção).
 **Decisão:** toda escrita derivada de evento tem chave natural determinística.
@@ -662,7 +677,7 @@ fase entrega valor sozinha.
 - [x] Lista por pessoa com volume da carteira e aptidão
 - [x] Ficha com a trilha de progressão e a categoria de cada documento
 - [x] Ação de promover, com os dois degraus se comportando de forma diferente
-- [ ] Alerta de venda em documento que não recebe mais venda nova
+- [x] Alerta de venda em documento que não recebe mais venda nova
 
 ### Fase 4 — Eventos na importação *(parcial)*
 - [x] Base CSV publica `cota.criada`, `cota.alterada`, `cota.cancelada`, `cota.contemplada`

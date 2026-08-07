@@ -14,6 +14,7 @@ import {
 import { evento, type NovoEvento } from "@/shared/events/catalogo";
 import { publicar } from "@/shared/events/outbox-prisma";
 import { drenarEventos } from "@/shared/events/handlers";
+import { contarVendasForaDoDocumento } from "@/modules/comercial/infrastructure/queries/vendas-fora-do-documento";
 import {
   CacheVendedores,
   garantirVendedorPorDocumento,
@@ -156,6 +157,11 @@ export async function importarBaseCsv(
       where: { importacaoId: importacao.id },
     });
 
+    // Vendas que caíram num documento já promovido. Não travam a importação —
+    // o fato veio da administradora e foi gravado — mas precisam aparecer no
+    // resumo, senão só seriam notadas quando o pagamento saísse errado.
+    const foraDoDocumento = await contarVendasForaDoDocumento();
+
     await prisma.importacao.update({
       where: { id: importacao.id },
       data: {
@@ -183,6 +189,7 @@ export async function importarBaseCsv(
             entregas: eventos.entregasOk,
             falhas: eventos.eventosComFalha,
           },
+          vendasEmDocumentoFechado: foraDoDocumento,
         },
       },
     });
