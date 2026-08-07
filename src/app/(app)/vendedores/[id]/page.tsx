@@ -31,6 +31,7 @@ import {
 import { Indicador } from "@/components/indicador";
 import { carregarFichaPessoa } from "@/server/services/pessoas";
 import { avaliarPessoas } from "@/modules/comercial/application/use-cases/aptos-promocao";
+import { Promover } from "./promover";
 import { carregarComissoesDaPessoa } from "@/server/services/comissao-equipe";
 import { PainelVendedor } from "./painel";
 import { BotaoSeparar } from "../../vinculos/formularios";
@@ -255,6 +256,25 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
               </p>
             </div>
           </CardContent>
+          {/* O botão aparece sempre que existe um degrau seguinte, não só
+              quando a meta foi batida. A meta orienta; quem decide é o RH, e
+              exceção de negócio não pode exigir alterar o banco na mão. As
+              regras estruturais — teto de documentos, degrau já alcançado —
+              essas o domínio recusa de verdade. */}
+          {podeEditar &&
+          vendedor.pessoa &&
+          trilha.aptidao.categoriaAlvo &&
+          trilha.aptidao.categoriaAlvo !== "INICIANTE" ? (
+            <CardContent className="border-t border-[var(--color-borda)] pt-4">
+              <Promover
+                pessoaId={vendedor.pessoa.id}
+                pessoaNome={trilha.nome}
+                categoriaAlvo={trilha.aptidao.categoriaAlvo}
+                apto={trilha.aptidao.apto}
+                faltam={trilha.aptidao.faltam}
+              />
+            </CardContent>
+          ) : null}
         </Card>
       ) : null}
 

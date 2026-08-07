@@ -111,11 +111,14 @@ graph LR
 
 Consequências que o modelo precisa respeitar:
 
-1. **Só um documento vende por vez.** Venda que chegar num documento já
-   encerrado é anomalia e deve virar alerta, não cálculo silencioso.
-2. **Virar Expert não para de vender.** Ele continua vendendo pelo CNPJ
-   veterano; o CNPJ expert é o veículo da supervisão. Isso casa com R2 —
-   supervisão só recebe sobre venda de Iniciante, e é da equipe dele.
+1. **Só um documento vende por vez** — mas **todos continuam recebendo**.
+   Parar de vender não é desativar: o documento segue recebendo comissão sobre
+   as vendas que já fez, para sempre. Venda NOVA que chegar num documento já
+   fechado para venda é anomalia, e vira alerta, nunca bloqueio.
+2. **Virar Expert não fecha nada.** O CNPJ veterano continua vendendo e
+   recebendo normalmente; o CNPJ expert nasce como veículo da supervisão e não
+   vende. O fechamento para venda acontece **só** no degrau iniciante →
+   veterano, e só no CPF.
 3. **As metas são parâmetro, não constante** (R8). R$ 3 mi e R$ 30 mi vivem em
    configuração com vigência.
 4. **"Vendedores aptos para promoção"**, no Dashboard, é exatamente o
@@ -643,8 +646,8 @@ fase entrega valor sozinha.
 - [ ] Tela de configuração das metas *(hoje só por SQL)*
 - [x] Lista por pessoa com volume da carteira e aptidão
 - [x] Ficha com a trilha de progressão e a categoria de cada documento
-- [ ] Alerta de venda em documento encerrado
-- [ ] Ação de promover (hoje a promoção é manual, documento a documento)
+- [x] Ação de promover, com os dois degraus se comportando de forma diferente
+- [ ] Alerta de venda em documento que não recebe mais venda nova
 
 ### Fase 4 — Eventos na importação *(parcial)*
 - [x] Base CSV publica `cota.criada`, `cota.alterada`, `cota.cancelada`, `cota.contemplada`

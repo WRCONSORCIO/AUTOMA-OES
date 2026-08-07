@@ -332,11 +332,19 @@ model Vendedor {
   cpfCnpjFormatado String?
   /// Derivado do documento: 11 dígitos é CPF, 14 é CNPJ.
   tipoDocumento    TipoDocumento     @default(CPF)
-  /// Documento que deixou de vender por promoção.
+  /// Data a partir da qual o documento não recebe VENDA NOVA.
   ///
-  /// Ao virar veterano a pessoa para de vender no CPF, por regra. O cadastro
-  /// não é apagado — ele continua respondendo pelo histórico e pelas comissões
-  /// já apuradas. Venda que chegar aqui depois desta data é anomalia.
+  /// Não é desativação, e a diferença é dinheiro: o documento **continua
+  /// recebendo** comissão sobre as vendas que já fez, para sempre. Só para de
+  /// entrar venda nova nele.
+  ///
+  /// Preenchido apenas no degrau iniciante → veterano, em que a pessoa passa a
+  /// operar pelo CNPJ e para de vender no CPF, por regra. No degrau veterano →
+  /// expert **nada é preenchido**: o CNPJ veterano segue vendendo, e o CNPJ de
+  /// expert nasce como identidade de supervisão, que não vende.
+  ///
+  /// Venda que chegar depois desta data é anomalia — vira alerta, nunca
+  /// bloqueio: a administradora é a fonte da verdade e o fato aconteceu.
   encerradoParaVendaEm DateTime?     @db.Date
   equipeId         String?
   gerenciaId       String?
