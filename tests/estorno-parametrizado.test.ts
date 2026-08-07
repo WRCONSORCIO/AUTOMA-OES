@@ -13,6 +13,7 @@ const regra = (over: Partial<RegraEstornoVigente> = {}): RegraEstornoVigente => 
   id: "padrao",
   vendedorId: null,
   tipo: "RECUPERACAO",
+  categoriaVenda: null,
   parcelaLimite: 6,
   percentual: 100,
   vigenteDe: dia("2024-01-01"),
@@ -26,6 +27,7 @@ const fato = (over: Partial<FatoCancelamento> = {}): FatoCancelamento => ({
   parcelasPagas: 2,
   dataCancelamento: dia("2025-06-10"),
   valorReferencia: 1000,
+  categoriaVenda: "VETERANO",
   ...over,
 });
 
@@ -105,6 +107,7 @@ describe("equivalência com a regra que era constante no código", () => {
     id: "regra_estorno_padrao_recuperacao",
     vendedorId: null,
     tipo: "RECUPERACAO",
+    categoriaVenda: null,
     parcelaLimite: 6,
     percentual: 100,
     vigenteDe: dia("1900-01-01"),
@@ -138,6 +141,109 @@ describe("equivalência com a regra que era constante no código", () => {
 
   it("cobre cancelamento de venda antiga — a vigência começa em 1900", () => {
     expect(gera({ emRecuperacao: true, parcelasPagas: 1, dataCancelamento: dia("2019-03-15") })).toBe(true);
+  });
+});
+
+/**
+ * Segundo tipo de estorno, informado pela WR: o cliente cancela com uma parcela
+ * paga e o vendedor devolve a comissão — mas SOMENTE nas vendas feitas pelo
+ * documento veterano, que é por onde a pessoa opera depois de promovida.
+ */
+describe("estorno por cancelamento com uma parcela paga", () => {
+  // Exatamente o que a migração 20260807140000 grava no banco.
+  const cancelamentoVeterano = regra({
+    id: "regra_estorno_padrao_cancelamento_veterano",
+    vendedorId: null,
+    tipo: "CANCELAMENTO",
+    categoriaVenda: "VETERANO",
+    parcelaLimite: 2,
+    percentual: 100,
+    vigenteDe: dia("1900-01-01"),
+  });
+
+  const recuperacaoPadrao = regra({
+    id: "regra_estorno_padrao_recuperacao",
+    categoriaVenda: null,
+    vigenteDe: dia("1900-01-01"),
+  });
+
+  const cenario = [cancelamentoVeterano, recuperacaoPadrao];
+  const fora = (over: Partial<FatoCancelamento>) =>
+    avaliarEstorno(fato({ emRecuperacao: false, ...over }), cenario);
+
+  it("venda veterana cancelada com 1 parcela paga estorna", () => {
+    const decisao = fora({ parcelasPagas: 1, categoriaVenda: "VETERANO" });
+    expect(decisao.gera).toBe(true);
+    if (decisao.gera) {
+      expect(decisao.tipo).toBe("CANCELAMENTO");
+      expect(decisao.valorEstorno).toBe(1000);
+    }
+  });
+
+  it("venda veterana cancelada sem nenhuma parcela paga também estorna", () => {
+    expect(fora({ parcelasPagas: 0, categoriaVenda: "VETERANO" }).gera).toBe(true);
+  });
+
+  it("venda veterana cancelada com 2 parcelas pagas NÃO estorna", () => {
+    expect(fora({ parcelasPagas: 2, categoriaVenda: "VETERANO" }).gera).toBe(false);
+  });
+
+  it("venda de INICIANTE não estorna por cancelamento", () => {
+    expect(fora({ parcelasPagas: 1, categoriaVenda: "INICIANTE" }).gera).toBe(false);
+  });
+
+  it("venda de EXPERT não estorna por cancelamento", () => {
+    expect(fora({ parcelasPagas: 1, categoriaVenda: "EXPERT" }).gera).toBe(false);
+  });
+
+  it("venda sem categoria congelada não estorna — melhor que estornar por suposição", () => {
+    expect(fora({ parcelasPagas: 1, categoriaVenda: null }).gera).toBe(false);
+  });
+
+  it("a recuperação continua valendo para QUALQUER categoria", () => {
+    const iniciante = avaliarEstorno(
+      fato({ emRecuperacao: true, parcelasPagas: 3, categoriaVenda: "INICIANTE" }),
+      cenario,
+    );
+    expect(iniciante.gera).toBe(true);
+    if (iniciante.gera) expect(iniciante.tipo).toBe("RECUPERACAO");
+  });
+
+  it("venda veterana em recuperação usa a regra de recuperação, não a de cancelamento", () => {
+    // Com 3 parcelas pagas passaria do limite 2 do cancelamento, mas está
+    // dentro do limite 6 da recuperação. A marcação de recuperação manda.
+    const decisao = avaliarEstorno(
+      fato({ emRecuperacao: true, parcelasPagas: 3, categoriaVenda: "VETERANO" }),
+      cenario,
+    );
+    expect(decisao.gera).toBe(true);
+    if (decisao.gera) expect(decisao.tipo).toBe("RECUPERACAO");
+  });
+});
+
+describe("precedência entre vendedor e categoria", () => {
+  const geral = regra({ id: "geral", vendedorId: null, categoriaVenda: null, percentual: 100 });
+  const porCategoria = regra({ id: "por-categoria", vendedorId: null, categoriaVenda: "VETERANO", percentual: 80 });
+  const porVendedor = regra({ id: "por-vendedor", vendedorId: "vend-1", categoriaVenda: null, percentual: 60 });
+  const porAmbos = regra({ id: "por-ambos", vendedorId: "vend-1", categoriaVenda: "VETERANO", percentual: 40 });
+
+  const escolher = (regras: RegraEstornoVigente[]) =>
+    resolverRegra(regras, "RECUPERACAO", "vend-1", dia("2025-06-10"), "VETERANO")?.id;
+
+  it("regra do vendedor para a categoria vence tudo", () => {
+    expect(escolher([geral, porCategoria, porVendedor, porAmbos])).toBe("por-ambos");
+  });
+
+  it("o vendedor pesa mais que a categoria", () => {
+    expect(escolher([geral, porCategoria, porVendedor])).toBe("por-vendedor");
+  });
+
+  it("sem regra do vendedor, a da categoria vence a geral", () => {
+    expect(escolher([geral, porCategoria])).toBe("por-categoria");
+  });
+
+  it("a geral é o último recurso", () => {
+    expect(escolher([geral])).toBe("geral");
   });
 });
 

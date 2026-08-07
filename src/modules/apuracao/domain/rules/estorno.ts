@@ -16,12 +16,20 @@ import type { ComVigencia } from "@/shared/domain/periodo";
  */
 
 export type TipoEstorno = "CANCELAMENTO" | "RECUPERACAO";
+export type CategoriaVenda = "INICIANTE" | "VETERANO" | "EXPERT";
 
 export interface RegraEstornoVigente extends ComVigencia {
   readonly id: string;
   /** Nulo = regra padrão da WR, aplicada a quem não tem regra própria. */
   readonly vendedorId: string | null;
   readonly tipo: TipoEstorno;
+  /**
+   * Categoria da venda a que a regra se aplica. Nulo = todas.
+   *
+   * O estorno por cancelamento só vale para venda do documento veterano, que é
+   * por onde a pessoa opera depois de promovida.
+   */
+  readonly categoriaVenda: CategoriaVenda | null;
   /**
    * Cancelamento com parcelas pagas ABAIXO deste número gera estorno.
    * Zero desliga o estorno para o caso — é como se configura "este vendedor
@@ -40,6 +48,8 @@ export interface FatoCancelamento {
   readonly dataCancelamento: Date | null;
   /** Comissão já paga sobre a venda — é o que se devolve. */
   readonly valorReferencia: number | null;
+  /** Categoria congelada na venda. Decide quais regras se aplicam. */
+  readonly categoriaVenda: CategoriaVenda | null;
 }
 
 export type DecisaoEstorno =
@@ -68,28 +78,48 @@ export function tipoDoEstorno(fato: FatoCancelamento): TipoEstorno {
 /**
  * Escolhe a regra que vale para o vendedor na data do cancelamento.
  *
- * Precedência: regra **do vendedor** vence a regra **padrão**. Entre duas do
- * mesmo nível, vence a de vigência mais recente. Nunca há fallback para
- * constante: sem regra cadastrada, não há estorno — e o motivo aparece na
- * decisão, para o financeiro saber que falta configurar em vez de achar que a
- * venda simplesmente não estornava.
+ * A precedência tem duas dimensões — o vendedor e a categoria da venda — e o
+ * mais específico vence em ambas, nesta ordem:
+ *
+ *   1. regra do vendedor, para aquela categoria
+ *   2. regra do vendedor, para qualquer categoria
+ *   3. regra padrão, para aquela categoria
+ *   4. regra padrão, para qualquer categoria
+ *
+ * O vendedor pesa mais que a categoria porque é a exceção negociada
+ * individualmente: quem cadastrou uma regra para uma pessoa específica quis
+ * justamente que ela escapasse do padrão.
+ *
+ * Entre duas do mesmo nível, vence a de vigência mais recente. Nunca há
+ * fallback para constante: sem regra cadastrada, não há estorno — e o motivo
+ * aparece na decisão, para o financeiro saber que falta configurar em vez de
+ * achar que a venda simplesmente não estornava.
  */
 export function resolverRegra(
   regras: readonly RegraEstornoVigente[],
   tipo: TipoEstorno,
   vendedorId: string | null,
   data: Date,
+  categoriaVenda: CategoriaVenda | null = null,
 ): RegraEstornoVigente | null {
   const candidatas = regras.filter(
     (regra) =>
       regra.tipo === tipo &&
-      (regra.vendedorId === null || regra.vendedorId === vendedorId),
+      (regra.vendedorId === null || regra.vendedorId === vendedorId) &&
+      // Regra de categoria específica exige que a venda TENHA aquela
+      // categoria. Venda sem categoria congelada só casa com regra geral —
+      // é melhor não estornar do que estornar por suposição.
+      (regra.categoriaVenda === null || regra.categoriaVenda === categoriaVenda),
   );
 
-  return resolverVigentePorPrecedencia(
-    candidatas,
-    data,
-    (regra) => regra.vendedorId !== null,
+  const porVendedor = candidatas.filter((regra) => regra.vendedorId !== null);
+  const padrao = candidatas.filter((regra) => regra.vendedorId === null);
+  const especificaDaCategoria = (regra: RegraEstornoVigente) =>
+    regra.categoriaVenda !== null;
+
+  return (
+    resolverVigentePorPrecedencia(porVendedor, data, especificaDaCategoria) ??
+    resolverVigentePorPrecedencia(padrao, data, especificaDaCategoria)
   );
 }
 
@@ -109,12 +139,19 @@ export function avaliarEstorno(
   }
 
   const tipo = tipoDoEstorno(fato);
-  const regra = resolverRegra(regras, tipo, fato.vendedorId, fato.dataCancelamento);
+  const regra = resolverRegra(
+    regras,
+    tipo,
+    fato.vendedorId,
+    fato.dataCancelamento,
+    fato.categoriaVenda,
+  );
 
   if (!regra) {
+    const escopo = fato.categoriaVenda ? ` para venda ${fato.categoriaVenda}` : "";
     return {
       gera: false,
-      motivo: `Sem regra de estorno vigente do tipo ${tipo} na data do cancelamento.`,
+      motivo: `Sem regra de estorno vigente do tipo ${tipo}${escopo} na data do cancelamento.`,
     };
   }
 

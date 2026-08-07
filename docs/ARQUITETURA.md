@@ -13,7 +13,7 @@ errada, corrija aqui primeiro — o código segue este documento.**
 
 | # | Questão | Decisão assumida | Impacto se estiver errada |
 |---|---|---|---|
-| P1 | Categoria / equipe / gerência / recuperação pertencem à **pessoa** ou ao **documento**? | **Ao documento.** O briefing é explícito e repetido (exemplo do João: CPF Iniciante, CNPJ 1 Veterano, CNPJ 2 Expert). O código anterior tratava como propriedade da pessoa. | Alta. Muda quem recebe o quê. A migração é reversível (§9.2) porque o histórico antigo é preservado, não convertido destrutivamente. |
+| ~~P1~~ | ~~Categoria pertence à pessoa ou ao documento?~~ | **RESPONDIDO pela WR: ao documento.** Ver §2.2 — não são categorias soltas, é uma trilha de progressão. | — |
 | P2 | Reescrever do zero ou reestruturar o que existe? | **Reestruturar in-place.** Existem ~7.500 linhas de regra testada e refinada contra arquivos reais (parsers de PDF por coordenada de glifo, identidade de cota, precedência de vendedor). Jogar fora seria destruir conhecimento de domínio caro e difícil de recuperar. | Baixa. A estrutura de pastas alvo (§7) é a mesma nos dois caminhos. |
 
 Sobre P2, vale ser direto: o pedido foi "não reutilize arquiteturas simples nem
@@ -85,6 +85,62 @@ Estas não são preferências. São invariantes do domínio e cada uma tem teste
 | R8 | Nenhum percentual, limite ou prazo é constante no código. Tudo vem de configuração com vigência. |
 | R9 | A base de comissão é crédito × percentual do Flex. |
 | R10 | Cancelamento **nunca** apaga. Muda situação e dispara verificação de estorno. |
+
+### 2.2 A trilha de progressão
+
+Informado pela WR. **É o coração do módulo Comercial** e explica por que a
+categoria pertence ao documento e não à pessoa.
+
+A pessoa não escolhe categoria: ela **progride**, e cada degrau abre um
+documento novo.
+
+```mermaid
+graph LR
+    A["CPF<br/>INICIANTE<br/>vende"] -->|"R$ 3 mi vendidos"| B["CNPJ 1<br/>VETERANO<br/>vende"]
+    A -.->|"para de vender<br/>(por regra)"| A2["CPF<br/>encerrado"]
+    B -->|"R$ 30 mi vendidos"| C["CNPJ 2<br/>EXPERT<br/>NÃO vende"]
+    B -.->|"continua vendendo"| B
+    C -.->|"recebe como<br/>supervisor"| C
+```
+
+| Documento | Categoria | Vende? | Papel |
+|---|---|---|---|
+| CPF | Iniciante | Sim, até ser promovido | Entrada. **Para de vender ao virar Veterano — por regra.** |
+| CNPJ 1 | Veterano | **Sim** | É por onde a pessoa opera depois de promovida, para sempre. |
+| CNPJ 2 | Expert | **Não** | Identidade pela qual recebe **supervisão** sobre os Iniciantes da equipe. |
+
+Consequências que o modelo precisa respeitar:
+
+1. **Só um documento vende por vez.** Venda que chegar num documento já
+   encerrado é anomalia e deve virar alerta, não cálculo silencioso.
+2. **Virar Expert não para de vender.** Ele continua vendendo pelo CNPJ
+   veterano; o CNPJ expert é o veículo da supervisão. Isso casa com R2 —
+   supervisão só recebe sobre venda de Iniciante, e é da equipe dele.
+3. **As metas são parâmetro, não constante** (R8). R$ 3 mi e R$ 30 mi vivem em
+   configuração com vigência.
+4. **"Vendedores aptos para promoção"**, no Dashboard, é exatamente o
+   acumulado cruzando esses limites.
+5. **A categoria da venda continua congelada.** Promover não reescreve nada do
+   que já foi vendido.
+
+> **Em aberto:** o acumulado de R$ 30 mi é da carreira inteira (CPF + CNPJ) ou
+> só do que foi vendido pelo CNPJ veterano? Muda quando a promoção dispara.
+> Precisa ser respondido antes de implementar a promoção automática.
+
+### 2.3 Quando há estorno
+
+Informado pela WR. Só existem **dois** momentos:
+
+| Situação | Limite | Categorias | Estado |
+|---|---|---|---|
+| Venda feita em **recuperação** | abaixo de 6 parcelas pagas | todas | Configurado |
+| Cliente cancela com **uma parcela paga** | abaixo de 2 parcelas pagas | **só Veterano** | Configurado |
+
+Fora desses dois casos não se cobra nada do vendedor.
+
+Os dois são linhas em `RegraEstorno`, com vigência e percentual — nenhum deles
+está em código. Um vendedor pode ter percentual próprio, e a regra dele vence a
+padrão.
 
 ---
 

@@ -37,8 +37,14 @@ export const gerarEstornoHandler: Handler<"carteira.cota.cancelada"> = {
   prioridade: 10,
 
   async executar(evento: EventoCancelada): Promise<void> {
-    const { cotaId, vendedorEfetivoId, dataCancelamento, parcelasPagas, emRecuperacao } =
-      evento.payload;
+    const {
+      cotaId,
+      vendedorEfetivoId,
+      dataCancelamento,
+      parcelasPagas,
+      emRecuperacao,
+      categoriaVenda,
+    } = evento.payload;
 
     const jaExiste = await prisma.estorno.findUnique({
       where: { cotaId },
@@ -58,6 +64,7 @@ export const gerarEstornoHandler: Handler<"carteira.cota.cancelada"> = {
         parcelasPagas,
         dataCancelamento: new Date(`${dataCancelamento}T00:00:00.000Z`),
         valorReferencia,
+        categoriaVenda,
       },
       regras,
     );

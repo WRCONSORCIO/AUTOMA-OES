@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { Prisma, type CategoriaVendedor } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   chaveDuplicidade,
@@ -440,7 +440,14 @@ async function criarCota(
 
     if (linha.situacao === "CANCELADO" && linha.dataCancelamento) {
       eventos.push(
-        eventoCancelamento(cota.id, linha, emRecuperacao, efetivo.vendedorId, ctx),
+        eventoCancelamento(
+          cota.id,
+          linha,
+          emRecuperacao,
+          efetivo.vendedorId,
+          categoriaVenda,
+          ctx,
+        ),
       );
     }
 
@@ -461,6 +468,7 @@ async function atualizarCota(
     emRecuperacao: boolean;
     geraEstorno: boolean;
     vendedorEfetivoId: string | null;
+    categoriaVenda: CategoriaVendedor | null;
   },
   linha: LinhaBase,
   vendedorAdmId: string | null,
@@ -528,6 +536,7 @@ async function atualizarCota(
           linha,
           existente.emRecuperacao,
           existente.vendedorEfetivoId,
+          existente.categoriaVenda,
           ctx,
         ),
       );
@@ -616,6 +625,7 @@ function eventoCancelamento(
   linha: LinhaBase,
   emRecuperacao: boolean,
   vendedorEfetivoId: string | null,
+  categoriaVenda: CategoriaVendedor | null,
   ctx: ContextoLote,
 ): NovoEvento {
   return evento(
@@ -629,6 +639,7 @@ function eventoCancelamento(
       dataCancelamento: emIso(linha.dataCancelamento as Date),
       parcelasPagas: linha.parcelasPagas,
       emRecuperacao,
+      categoriaVenda,
     },
     metadadosDe(ctx),
   );

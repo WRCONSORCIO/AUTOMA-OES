@@ -39,6 +39,12 @@ export interface CatalogoEventos {
     readonly dataCancelamento: string;
     readonly parcelasPagas: number;
     readonly emRecuperacao: boolean;
+    /**
+     * Categoria congelada na venda. Vai no evento, e não é buscada pelo
+     * handler, porque é o snapshot da época — reler do vendedor traria a
+     * categoria de hoje e estornaria pela regra errada.
+     */
+    readonly categoriaVenda: "INICIANTE" | "VETERANO" | "EXPERT" | null;
   };
   "carteira.cota.contemplada": EscopoCota & {
     readonly dataContemplacao: string | null;
