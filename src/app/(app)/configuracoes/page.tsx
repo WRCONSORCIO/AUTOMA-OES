@@ -29,12 +29,15 @@ import {
 import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
 import { BotaoSemear, EditorTabela } from "./formularios";
 import { BotaoAlternarFlex, FormularioFlex } from "../tabelas/formularios";
+import { listarRegrasEstorno } from "@/modules/apuracao/application/use-cases/configurar-regra-estorno";
+import { LinhaRegraEstorno, NovaRegraEstorno } from "./estorno-formularios";
 
 export const metadata: Metadata = { title: "Configurações" };
 
 const ABAS: Aba[] = [
   { chave: "comissoes", rotulo: "Comissões" },
   { chave: "flex", rotulo: "Flex" },
+  { chave: "estornos", rotulo: "Estornos" },
 ];
 
 /** A ordem em que as tabelas aparecem: quem a WR paga primeiro. */
@@ -59,10 +62,23 @@ export default async function PaginaConfiguracoes({
   const brutos = await searchParams;
   const aba = lerAba(brutos, ABAS);
 
-  const [tabelas, modalidades] = await Promise.all([
+  const [tabelas, modalidades, regrasEstorno, vendedores] = await Promise.all([
     carregarTabelasInternas(),
     prisma.modalidadeFlex.findMany({ orderBy: { percentual: "asc" } }),
+    listarRegrasEstorno(),
+    prisma.vendedor.findMany({
+      where: { situacao: "ATIVO" },
+      select: { id: true, nome: true },
+      orderBy: { nome: "asc" },
+    }),
   ]);
+
+  const dia = (data: Date | null) => (data ? data.toISOString().slice(0, 10) : null);
+  const regrasView = regrasEstorno.map((regra) => ({
+    ...regra,
+    vigenteDe: dia(regra.vigenteDe) as string,
+    vigenteAte: dia(regra.vigenteAte),
+  }));
 
   const porChave = new Map(
     tabelas.map((tabela) => [`${tabela.destino}|${tabela.segmento}`, tabela]),
@@ -239,6 +255,55 @@ export default async function PaginaConfiguracoes({
                   )}
                 </tbody>
               </Tabela>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+
+      {aba === "estornos" ? (
+        <>
+          <Aviso tom="marca">
+            Só existem <strong>duas</strong> situações de estorno: venda feita em
+            período de recuperação, e cancelamento com uma parcela paga — este
+            último apenas nas vendas do documento veterano. Fora disso, nada é
+            cobrado do vendedor.
+          </Aviso>
+
+          <Aviso tom="atencao">
+            Alterar uma regra <strong>não reescreve o passado</strong>: o período
+            atual é encerrado e um novo é aberto a partir da data informada. Um
+            cancelamento é sempre julgado pela regra que valia no dia em que
+            aconteceu.
+          </Aviso>
+
+          {podeEditar ? (
+            <Card>
+              <CardContent className="py-4">
+                <NovaRegraEstorno vendedores={vendedores} />
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Regras cadastradas</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {regrasView.length === 0 ? (
+                <p className="text-sm text-[var(--color-texto-2)]">
+                  Nenhuma regra cadastrada. Sem regra vigente, nenhum cancelamento
+                  gera estorno.
+                </p>
+              ) : (
+                regrasView.map((regra) => (
+                  <LinhaRegraEstorno
+                    key={regra.id}
+                    regra={regra}
+                    vendedores={vendedores}
+                    podeEditar={podeEditar}
+                  />
+                ))
+              )}
             </CardContent>
           </Card>
         </>

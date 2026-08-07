@@ -1,0 +1,96 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { exigirPermissao } from "@/server/auth/session";
+import { parseValorBr } from "@/lib/normalize";
+import {
+  encerrarRegraEstorno,
+  salvarRegraEstorno,
+} from "@/modules/apuracao/application/use-cases/configurar-regra-estorno";
+
+export interface EstadoAcao {
+  erro?: string;
+  sucesso?: string;
+}
+
+/**
+ * Percentual e limite chegam como texto do formulário, no formato brasileiro.
+ * A validação é rígida de propósito: é dinheiro que sai do bolso de alguém, e
+ * um campo mal preenchido não pode virar regra vigente.
+ */
+const esquema = z.object({
+  tipo: z.enum(["CANCELAMENTO", "RECUPERACAO"]),
+  categoriaVenda: z.enum(["INICIANTE", "VETERANO", "EXPERT"]).nullable(),
+  vendedorId: z.string().min(1).nullable(),
+  parcelaLimite: z.number().int().min(0).max(200),
+  percentual: z.number().min(0).max(100),
+  vigenteDe: z.date(),
+  observacoes: z.string().max(500).nullable(),
+});
+
+function lerData(bruto: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(bruto)) return null;
+  const data = new Date(`${bruto}T00:00:00.000Z`);
+  return Number.isNaN(data.getTime()) ? null : data;
+}
+
+function textoOuNulo(valor: FormDataEntryValue | null): string | null {
+  const texto = String(valor ?? "").trim();
+  return texto === "" ? null : texto;
+}
+
+export async function acaoSalvarRegraEstorno(
+  _anterior: EstadoAcao,
+  formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  const percentual = parseValorBr(String(formData.get("percentual") ?? ""));
+  const limiteBruto = String(formData.get("parcelaLimite") ?? "").trim();
+  const vigenteDe = lerData(String(formData.get("vigenteDe") ?? ""));
+
+  if (percentual === null) return { erro: "Informe o percentual." };
+  if (!/^\d+$/.test(limiteBruto)) return { erro: "Informe o limite de parcelas." };
+  if (!vigenteDe) return { erro: "Informe a data de início da vigência." };
+
+  const analise = esquema.safeParse({
+    tipo: String(formData.get("tipo") ?? ""),
+    categoriaVenda: textoOuNulo(formData.get("categoriaVenda")),
+    vendedorId: textoOuNulo(formData.get("vendedorId")),
+    parcelaLimite: Number(limiteBruto),
+    percentual,
+    vigenteDe,
+    observacoes: textoOuNulo(formData.get("observacoes")),
+  });
+
+  if (!analise.success) {
+    return { erro: analise.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  await salvarRegraEstorno(analise.data, { id: sessao.id, nome: sessao.nome });
+
+  revalidatePath("/configuracoes");
+  return {
+    sucesso:
+      analise.data.parcelaLimite === 0
+        ? "Regra gravada. Limite zero desliga o estorno para este caso."
+        : `Regra gravada: ${analise.data.percentual}% abaixo de ${analise.data.parcelaLimite} parcela(s).`,
+  };
+}
+
+export async function acaoEncerrarRegraEstorno(
+  _anterior: EstadoAcao,
+  formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  const id = String(formData.get("id") ?? "").trim();
+  const em = lerData(String(formData.get("em") ?? "")) ?? new Date();
+  if (!id) return { erro: "Regra não informada." };
+
+  await encerrarRegraEstorno(id, em, { id: sessao.id, nome: sessao.nome });
+
+  revalidatePath("/configuracoes");
+  return { sucesso: "Regra encerrada. O histórico já apurado permanece intacto." };
+}
