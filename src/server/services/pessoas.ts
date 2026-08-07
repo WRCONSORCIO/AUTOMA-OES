@@ -499,6 +499,12 @@ export interface DocumentoDaPessoa {
   cpfCnpj: string;
   tipo: "CPF" | "CNPJ" | "OUTRO";
   situacao: string;
+  /** Categoria PRÓPRIA do documento. O CPF pode ser iniciante e o CNPJ veterano. */
+  categoriaAtual: CategoriaVendedor;
+  equipeNome: string | null;
+  gerenciaNome: string | null;
+  /** Documento que parou de vender por promoção. */
+  encerradoParaVendaEm: Date | null;
   cotas: number;
   credito: number;
   comissaoWr: number;
@@ -521,7 +527,16 @@ export async function carregarFichaPessoa(pessoaId: string): Promise<FichaPessoa
       id: true,
       nome: true,
       documentos: {
-        select: { id: true, nome: true, cpfCnpj: true, situacao: true },
+        select: {
+          id: true,
+          nome: true,
+          cpfCnpj: true,
+          situacao: true,
+          categoriaAtual: true,
+          encerradoParaVendaEm: true,
+          equipe: { select: { nome: true } },
+          gerencia: { select: { nome: true } },
+        },
         orderBy: { criadoEm: "asc" },
       },
     },
@@ -579,6 +594,10 @@ export async function carregarFichaPessoa(pessoaId: string): Promise<FichaPessoa
       cpfCnpj: documento.cpfCnpj,
       tipo: tipoDocumento(documento.cpfCnpj),
       situacao: documento.situacao,
+      categoriaAtual: documento.categoriaAtual,
+      equipeNome: documento.equipe?.nome ?? null,
+      gerenciaNome: documento.gerencia?.nome ?? null,
+      encerradoParaVendaEm: documento.encerradoParaVendaEm,
       cotas: cotas?.cotas ?? 0,
       credito: arredondar(cotas?.credito ?? 0),
       comissaoWr: arredondar(comissaoPorDocumento.get(documento.id) ?? 0),

@@ -30,9 +30,16 @@ import {
 } from "@/components/ui";
 import { Indicador } from "@/components/indicador";
 import { carregarFichaPessoa } from "@/server/services/pessoas";
+import { avaliarPessoas } from "@/modules/comercial/application/use-cases/aptos-promocao";
 import { carregarComissoesDaPessoa } from "@/server/services/comissao-equipe";
 import { PainelVendedor } from "./painel";
 import { BotaoSeparar } from "../../vinculos/formularios";
+
+const TOM_CATEGORIA_DOC = {
+  INICIANTE: "atencao",
+  VETERANO: "marca",
+  EXPERT: "bom",
+} as const;
 
 export const metadata: Metadata = { title: "Vendedor" };
 
@@ -69,8 +76,15 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
   const ficha = vendedor.pessoa ? await carregarFichaPessoa(vendedor.pessoa.id) : null;
   const documentosDaPessoa = ficha?.documentos.map((documento) => documento.vendedorId) ?? [id];
 
-  const [resumoCotas, comissaoWr, cotasRecuperacao, equipes, gerencias, comissoesEquipe] =
-    await Promise.all([
+  const [
+    resumoCotas,
+    comissaoWr,
+    cotasRecuperacao,
+    equipes,
+    gerencias,
+    comissoesEquipe,
+    aptidaoDaPessoa,
+  ] = await Promise.all([
     prisma.cota.aggregate({
       where: { vendedorEfetivoId: { in: documentosDaPessoa } },
       _count: { _all: true },
@@ -94,7 +108,13 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
       orderBy: { nome: "asc" },
     }),
     vendedor.pessoa ? carregarComissoesDaPessoa(vendedor.pessoa.id) : Promise.resolve([]),
+    // A trilha é da PESSOA: soma a carteira de todos os documentos dela.
+    vendedor.pessoa
+      ? avaliarPessoas({ pessoaIds: [vendedor.pessoa.id], limite: 1 })
+      : Promise.resolve([]),
   ]);
+
+  const trilha = aptidaoDaPessoa[0] ?? null;
 
   const totalPrevisto = comissoesEquipe.reduce((soma, linha) => soma + linha.previsto, 0);
   const totalLiberado = comissoesEquipe.reduce((soma, linha) => soma + linha.liberado, 0);
@@ -184,13 +204,70 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
         />
       ) : null}
 
+      {trilha ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Trilha de progressão</CardTitle>
+            <p className="text-sm text-[var(--color-texto-2)]">
+              A meta conta a <strong>carteira completa</strong> da pessoa, somando todos os
+              documentos. A promoção nunca acontece sozinha: ela abre um documento novo e muda
+              quanto a pessoa passa a receber, então quem decide é o RH.
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <p className="text-xs text-[var(--color-texto-3)]">Vendido na carteira</p>
+              <p className="numerico text-lg font-medium">
+                {formatarMoeda(trilha.volumeVendido)}
+              </p>
+              {trilha.volumeCancelado > 0 ? (
+                <p className="text-xs text-[var(--color-texto-3)]">
+                  inclui {formatarMoeda(trilha.volumeCancelado)} já cancelado
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <p className="text-xs text-[var(--color-texto-3)]">Próximo degrau</p>
+              <p className="text-lg font-medium">
+                {trilha.aptidao.categoriaAlvo ?? "—"}
+              </p>
+              {trilha.aptidao.volumeMinimo !== null ? (
+                <p className="text-xs text-[var(--color-texto-3)]">
+                  meta de {formatarMoeda(trilha.aptidao.volumeMinimo)}
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <p className="text-xs text-[var(--color-texto-3)]">Situação</p>
+              <Badge tom={trilha.aptidao.apto ? "bom" : "neutro"}>
+                {trilha.aptidao.apto ? "Apto a promover" : "Em progresso"}
+              </Badge>
+              {/* O motivo do domínio traz os números crus, porque formatar moeda
+                  é decisão de apresentação. Aqui a tela formata; o texto do
+                  domínio só aparece quando não há número a mostrar (já é expert,
+                  ou falta cadastrar a meta). */}
+              <p className="mt-1 text-xs text-[var(--color-texto-2)]">
+                {trilha.aptidao.volumeMinimo === null
+                  ? trilha.aptidao.motivo
+                  : trilha.aptidao.apto
+                    ? `Cruzou a meta com ${formatarMoeda(trilha.volumeVendido)}. Requer abrir um CNPJ.`
+                    : `Faltam ${formatarMoeda(trilha.aptidao.faltam)}.`}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {ficha && ficha.documentos.length > 0 ? (
         <Card>
           <CardHeader>
             <CardTitle>Documentos desta pessoa</CardTitle>
             <p className="text-sm text-[var(--color-texto-2)]">
-              O vendedor começa no CPF e passa a operar por CNPJ ao mudar de categoria. Categoria
-              e recuperação valem para todos os documentos abaixo.
+              A pessoa começa vendendo no CPF e passa a operar por CNPJ ao ser promovida.{" "}
+              <strong>Cada documento tem a sua própria categoria</strong>, equipe, gerência e
+              recuperação — é assim que o CPF pode continuar iniciante enquanto o CNPJ já é
+              veterano. O dinheiro de cada venda segue a categoria do documento que vendeu, na
+              data em que vendeu.
             </p>
           </CardHeader>
           <CardContent className="p-0">
@@ -199,6 +276,8 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
                 <tr>
                   <Th>Documento</Th>
                   <Th>Nome no cadastro</Th>
+                  <Th>Categoria</Th>
+                  <Th>Equipe / Gerência</Th>
                   <Th>Situação</Th>
                   <Th className="text-right">Vendas</Th>
                   <Th className="text-right">Crédito</Th>
@@ -229,6 +308,24 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
                         </Link>
                       )}
                     </Td>
+                    <Td>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge tom={TOM_CATEGORIA_DOC[documento.categoriaAtual]}>
+                          {documento.categoriaAtual}
+                        </Badge>
+                        {documento.encerradoParaVendaEm ? (
+                          <Badge tom="neutro">
+                            não vende desde {formatarData(documento.encerradoParaVendaEm)}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </Td>
+                    <Td className="text-sm">
+                      {documento.equipeNome ?? "—"}
+                      <div className="text-xs text-[var(--color-texto-3)]">
+                        {documento.gerenciaNome ?? "sem gerência"}
+                      </div>
+                    </Td>
                     <Td>{documento.situacao}</Td>
                     <Td className="numerico text-right">{formatarNumero(documento.cotas)}</Td>
                     <Td className="numerico text-right">{formatarMoeda(documento.credito)}</Td>
@@ -244,6 +341,8 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
                 ))}
                 <Tr className="font-medium">
                   <Td colSpan={3}>Total da pessoa</Td>
+                  <Td />
+                  <Td />
                   <Td className="numerico text-right">{formatarNumero(ficha.totalCotas)}</Td>
                   <Td className="numerico text-right">{formatarMoeda(ficha.totalCredito)}</Td>
                   <Td className="numerico text-right">

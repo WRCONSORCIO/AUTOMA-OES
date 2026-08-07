@@ -641,8 +641,10 @@ fase entrega valor sozinha.
 - [x] Consolidado da pessoa em SQL (volume da carteira completa)
 - [x] Fila de aptos para promoção, no Dashboard
 - [ ] Tela de configuração das metas *(hoje só por SQL)*
+- [x] Lista por pessoa com volume da carteira e aptidão
+- [x] Ficha com a trilha de progressão e a categoria de cada documento
 - [ ] Alerta de venda em documento encerrado
-- [ ] Lista por pessoa e ficha com os documentos
+- [ ] Ação de promover (hoje a promoção é manual, documento a documento)
 
 ### Fase 4 — Eventos na importação *(parcial)*
 - [x] Base CSV publica `cota.criada`, `cota.alterada`, `cota.cancelada`, `cota.contemplada`

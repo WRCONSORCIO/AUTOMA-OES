@@ -40,6 +40,7 @@ export async function carregarMetas(): Promise<MetaPromocao[]> {
 }
 
 export async function avaliarPessoas(opcoes: {
+  pessoaIds?: string[];
   gerenciaId?: string;
   equipeId?: string;
   limite?: number;

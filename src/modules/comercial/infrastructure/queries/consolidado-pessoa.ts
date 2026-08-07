@@ -78,15 +78,22 @@ function numero(valor: Prisma.Decimal | null): number {
  */
 export async function consolidarPessoas(opcoes: {
   pessoaId?: string;
+  /** Restringe às pessoas de uma página já paginada por outra consulta. */
+  pessoaIds?: string[];
   gerenciaId?: string;
   equipeId?: string;
   limite?: number;
   busca?: string;
 } = {}): Promise<ConsolidadoPessoa[]> {
-  const { pessoaId, gerenciaId, equipeId, limite = 500, busca } = opcoes;
+  const { pessoaId, pessoaIds, gerenciaId, equipeId, limite = 500, busca } = opcoes;
+
+  // Lista vazia significa "nenhuma pessoa", não "sem filtro": deixar passar
+  // devolveria a base inteira para uma página que não pediu nada.
+  if (pessoaIds && pessoaIds.length === 0) return [];
 
   const filtroDoc = Prisma.sql`
     ${pessoaId ? Prisma.sql`AND v."pessoaId" = ${pessoaId}` : Prisma.empty}
+    ${pessoaIds ? Prisma.sql`AND v."pessoaId" IN (${Prisma.join(pessoaIds)})` : Prisma.empty}
     ${gerenciaId ? Prisma.sql`AND v."gerenciaId" = ${gerenciaId}` : Prisma.empty}
     ${equipeId ? Prisma.sql`AND v."equipeId" = ${equipeId}` : Prisma.empty}
   `;
