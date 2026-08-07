@@ -637,8 +637,10 @@ fase entrega valor sozinha.
 - [x] Invariante 1 CPF + 2 CNPJ — CPF no banco, CNPJ no domínio
 - [x] Regras da trilha: documento que vende, venda em documento encerrado
 - [x] Regras de promoção com metas por vigência
-- [ ] `MetaPromocao` persistida e tela de configuração das metas
-- [ ] Consolidado da pessoa (volume da carteira completa)
+- [x] `MetaPromocao` persistida, com as duas metas semeadas (3 mi / 30 mi)
+- [x] Consolidado da pessoa em SQL (volume da carteira completa)
+- [x] Fila de aptos para promoção, no Dashboard
+- [ ] Tela de configuração das metas *(hoje só por SQL)*
 - [ ] Alerta de venda em documento encerrado
 - [ ] Lista por pessoa e ficha com os documentos
 

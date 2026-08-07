@@ -7,8 +7,10 @@ import {
   Trophy,
   TrendingDown,
   Users,
+  TrendingUp,
 } from "lucide-react";
 import { exigirPermissao } from "@/server/auth/session";
+import { aptosParaPromocao } from "@/modules/comercial/application/use-cases/aptos-promocao";
 import { escopoDoUsuario } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import {
@@ -46,6 +48,7 @@ export default async function PaginaDashboard({
 
   const [
     indicadores,
+    aptos,
     serie,
     rankingVendedores,
     rankingEquipes,
@@ -56,6 +59,9 @@ export default async function PaginaDashboard({
     equipes,
   ] = await Promise.all([
     carregarIndicadores(filtro, escopo),
+    // A fila de promoção não olha o período do filtro: a meta é sobre a
+    // carteira inteira da pessoa, não sobre o mês que está sendo consultado.
+    aptosParaPromocao({ gerenciaId: escopo.gerenciaId, equipeId: escopo.equipeId }),
     carregarSerieMensal({ ...filtro, de: undefined, ate: undefined }, escopo),
     carregarRanking("pessoaId", filtro, escopo, 10),
     carregarRanking("equipeId", filtro, escopo, 10),
@@ -136,6 +142,20 @@ export default async function PaginaDashboard({
           valor={formatarNumero(indicadores.cotasCanceladas)}
           icone={<Ban className="h-4 w-4" />}
           tom={indicadores.cotasCanceladas > 0 ? "atencao" : "neutro"}
+        />
+        <Indicador
+          rotulo="Aptos para promoção"
+          valor={formatarNumero(aptos.length)}
+          detalhe={
+            aptos.length > 0
+              ? aptos
+                  .slice(0, 2)
+                  .map((p) => `${p.nome} → ${p.aptidao.categoriaAlvo}`)
+                  .join(" · ")
+              : "Ninguém cruzou a meta ainda"
+          }
+          icone={<TrendingUp className="h-4 w-4" />}
+          tom={aptos.length > 0 ? "bom" : "neutro"}
         />
         <Indicador
           rotulo="Vendas em recuperação"

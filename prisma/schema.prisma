@@ -221,6 +221,7 @@ model Usuario {
   alocacoesRegistradas  VendedorAlocacaoHistorico[]
   vinculosRegistrados   PessoaVinculoHistorico[]
   regrasEstorno         RegraEstorno[]
+  metasPromocao         MetaPromocao[]
 
   @@index([perfil, ativo])
   @@index([gerenciaId])
@@ -1143,6 +1144,35 @@ model Backup {
 
   @@index([iniciadoEm])
   @@index([status])
+}
+
+/// Meta de volume que promove a pessoa ao próximo degrau da trilha.
+///
+/// Parametrizada com vigência, como toda regra: mudar a meta hoje não pode
+/// reclassificar quem já foi promovido sob a meta antiga.
+///
+/// O volume conta a **carteira completa** — todas as vendas da pessoa, somando
+/// os documentos. Foi assim que a WR definiu.
+model MetaPromocao {
+  id String @id @default(cuid())
+
+  /// Categoria alcançada ao cruzar o limite.
+  categoriaAlvo CategoriaVendedor
+  /// Volume vendido acumulado que dispara a promoção.
+  volumeMinimo  Decimal           @db.Decimal(18, 2)
+  /// Documento que o degrau exige abrir.
+  abreDocumento TipoDocumento     @default(CNPJ)
+
+  vigenteDe  DateTime  @db.Date
+  vigenteAte DateTime? @db.Date
+
+  observacoes String?
+  usuarioId   String?
+  criadoEm    DateTime @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([categoriaAlvo, vigenteDe])
 }
 
 model ConfiguracaoSistema {
