@@ -659,10 +659,10 @@ fase entrega valor sozinha.
 - [x] Outbox transacional + barramento + despachante + registro
 - [x] Rateio que fecha ao centavo
 
-### Fase 2 — Parametrização (mata R8) *(em andamento)*
+### Fase 2 — Parametrização (mata R8) ✅
 - [x] `RegraEstorno` com os dois tipos, percentual por vendedor, vigência
 - [x] Remoção de `PARCELA_LIMITE_ESTORNO`, com equivalência provada em teste
-- [ ] Tela de configuração das regras *(hoje só por SQL / seed)*
+- [x] Tela de configuração das regras de estorno e das metas
 - [ ] Demais constantes de regra ainda no código
 
 ### Fase 3 — Comercial por documento *(em andamento)*
@@ -673,7 +673,7 @@ fase entrega valor sozinha.
 - [x] `MetaPromocao` persistida, com as duas metas semeadas (3 mi / 30 mi)
 - [x] Consolidado da pessoa em SQL (volume da carteira completa)
 - [x] Fila de aptos para promoção, no Dashboard
-- [ ] Tela de configuração das metas *(hoje só por SQL)*
+- [x] Tela de configuração das metas
 - [x] Lista por pessoa com volume da carteira e aptidão
 - [x] Ficha com a trilha de progressão e a categoria de cada documento
 - [x] Ação de promover, com os dois degraus se comportando de forma diferente
@@ -687,16 +687,25 @@ fase entrega valor sozinha.
 - [x] **Fim da varredura na importação:** o reapuramento recebe só as cotas que
       o arquivo tocou. Recálculo por mudança de tabela segue completo, e deve
       seguir — mudar percentual afeta tudo que foi apurado com ele.
-- [ ] Rota de manutenção que recolhe eventos pendentes fora da importação
+- [x] Rota de manutenção que recolhe eventos pendentes fora da importação
 
 > **CV069E não publica evento, de propósito.** Nenhum handler reagiria a ele: o
 > valor é lido sob demanda pelo cálculo do estorno. Evento sem consumidor é
 > cerimônia, e cerimônia é o que faz arquitetura apodrecer.
 
-### Fase 5 — Os seis módulos *(não iniciada)*
-- [ ] Reorganização das rotas e da navegação
-- [ ] Projeções e dashboard em tempo real
+### Fase 5 — Os seis módulos *(parcial)*
+- [x] Navegação reorganizada em seis módulos, com subitens do módulo aberto
+- [ ] Rotas ainda são as antigas (`/vendedores`, `/clientes`…), só o menu mudou
+- [ ] `/comissoes` mostra o que a WR recebe e conflita com R6 — ver abaixo
+- [ ] Projeções materializadas para o dashboard
 - [ ] Filtros inteligentes, busca instantânea
+
+> **Conflito aberto com R6.** A tela `/comissoes` exibe a comissão que a
+> administradora paga à WR, e o briefing diz que esse número nunca deve aparecer.
+> Ela ficou dentro de Financeiro, renomeada para "Fechamento da administradora" e
+> restrita ao perfil financeiro, mas a decisão é da WR: ou o número some da tela,
+> ou R6 vale só para os demais perfis. Não removi uma tela que está em uso sem
+> essa resposta.
 
 ### 9.1 Compatibilidade
 

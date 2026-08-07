@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Botao } from "@/components/ui";
-import { GRUPOS, NAVEGACAO, type ItemNavegacao } from "./navegacao";
+import { modulosPara, type ModuloNavegacao } from "./navegacao";
 
 const ICONES = {
   dashboard: LayoutDashboard,
@@ -52,45 +52,68 @@ function estaAtivo(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function Itens({ itens, aoNavegar }: { itens: ItemNavegacao[]; aoNavegar?: () => void }) {
+function Itens({
+  modulos,
+  aoNavegar,
+}: {
+  modulos: ModuloNavegacao[];
+  aoNavegar?: () => void;
+}) {
   const pathname = usePathname();
 
   return (
-    <nav className="flex flex-col gap-6">
-      {GRUPOS.map((grupo) => {
-        const doGrupo = itens.filter((item) => item.grupo === grupo);
-        if (doGrupo.length === 0) return null;
+    <nav className="flex flex-col gap-1">
+      {modulos.map((modulo) => {
+        const Icone = ICONES[modulo.icone as keyof typeof ICONES] ?? ClipboardList;
+
+        // O módulo fica aberto quando a rota atual é dele. Abrir por clique
+        // exigiria um clique a mais para chegar onde o usuário já sabe que
+        // quer ir; abrir tudo devolveria o menu de quinze itens.
+        const dentroDoModulo =
+          estaAtivo(pathname, modulo.href) ||
+          modulo.itens.some((item) => estaAtivo(pathname, item.href));
 
         return (
-          <div key={grupo}>
-            <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-[var(--color-texto-3)]">
-              {grupo}
-            </p>
-            <ul className="flex flex-col gap-0.5">
-              {doGrupo.map((item) => {
-                const Icone = ICONES[item.icone as keyof typeof ICONES] ?? ClipboardList;
-                const ativo = estaAtivo(pathname, item.href);
+          <div key={modulo.chave}>
+            <Link
+              href={modulo.href}
+              onClick={aoNavegar}
+              aria-current={estaAtivo(pathname, modulo.href) ? "page" : undefined}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                dentroDoModulo
+                  ? "bg-[var(--color-marca-suave)] font-medium text-[var(--color-marca-forte)]"
+                  : "text-[var(--color-texto-2)] hover:bg-[var(--color-superficie-3)]",
+              )}
+            >
+              <Icone className="h-4 w-4 shrink-0" />
+              {modulo.rotulo}
+            </Link>
 
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={aoNavegar}
-                      aria-current={ativo ? "page" : undefined}
-                      className={cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                        ativo
-                          ? "bg-[var(--color-marca-suave)] font-medium text-[var(--color-marca-forte)]"
-                          : "text-[var(--color-texto-2)] hover:bg-[var(--color-superficie-3)]",
-                      )}
-                    >
-                      <Icone className="h-4 w-4 shrink-0" />
-                      {item.rotulo}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+            {dentroDoModulo && modulo.itens.length > 1 ? (
+              <ul className="mt-0.5 mb-1 flex flex-col gap-0.5 border-l border-[var(--color-borda)] pl-3 ml-5">
+                {modulo.itens.map((item) => {
+                  const ativo = estaAtivo(pathname, item.href);
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        onClick={aoNavegar}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "block rounded-lg px-3 py-1.5 text-sm transition-colors",
+                          ativo
+                            ? "font-medium text-[var(--color-marca-forte)]"
+                            : "text-[var(--color-texto-3)] hover:bg-[var(--color-superficie-3)] hover:text-[var(--color-texto-2)]",
+                        )}
+                      >
+                        {item.rotulo}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
           </div>
         );
       })}
@@ -100,7 +123,7 @@ function Itens({ itens, aoNavegar }: { itens: ItemNavegacao[]; aoNavegar?: () =>
 
 export function Sidebar({ modulos }: { modulos: string[] }) {
   const [aberto, setAberto] = useState(false);
-  const itens = NAVEGACAO.filter((item) => modulos.includes(item.modulo));
+  const navegacao = modulosPara(modulos);
 
   return (
     <>
@@ -115,7 +138,7 @@ export function Sidebar({ modulos }: { modulos: string[] }) {
           </div>
         </div>
         <div className="overflow-y-auto p-3" style={{ maxHeight: "calc(100dvh - 4rem)" }}>
-          <Itens itens={itens} />
+          <Itens modulos={navegacao} />
         </div>
       </aside>
 
@@ -151,7 +174,7 @@ export function Sidebar({ modulos }: { modulos: string[] }) {
                 <X className="h-4 w-4" />
               </Botao>
             </div>
-            <Itens itens={itens} aoNavegar={() => setAberto(false)} />
+            <Itens modulos={navegacao} aoNavegar={() => setAberto(false)} />
           </div>
         </div>
       ) : null}
