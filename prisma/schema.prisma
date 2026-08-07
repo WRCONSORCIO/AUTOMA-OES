@@ -35,6 +35,16 @@ enum CategoriaVendedor {
   EXPERT
 }
 
+/// Natureza do documento pelo qual a pessoa opera.
+///
+/// A pessoa entra vendendo no CPF e, ao ser promovida, passa a operar por CNPJ.
+/// O limite é 1 CPF + 2 CNPJs, porque é exatamente a trilha iniciante →
+/// veterano → expert.
+enum TipoDocumento {
+  CPF
+  CNPJ
+}
+
 enum SituacaoVendedor {
   ATIVO
   INATIVO
@@ -319,6 +329,14 @@ model Vendedor {
   // Normalizado (somente dígitos) para casar com a base da administradora.
   cpfCnpj          String            @unique
   cpfCnpjFormatado String?
+  /// Derivado do documento: 11 dígitos é CPF, 14 é CNPJ.
+  tipoDocumento    TipoDocumento     @default(CPF)
+  /// Documento que deixou de vender por promoção.
+  ///
+  /// Ao virar veterano a pessoa para de vender no CPF, por regra. O cadastro
+  /// não é apagado — ele continua respondendo pelo histórico e pelas comissões
+  /// já apuradas. Venda que chegar aqui depois desta data é anomalia.
+  encerradoParaVendaEm DateTime?     @db.Date
   equipeId         String?
   gerenciaId       String?
   categoriaAtual   CategoriaVendedor @default(INICIANTE)
@@ -363,9 +381,11 @@ model Vendedor {
 /// nunca pela categoria atual do vendedor.
 model VendedorCategoriaHistorico {
   id         String            @id @default(cuid())
-  /// Dono do período. A categoria vale para todos os documentos da pessoa.
+  /// Pessoa a que o documento pertence. Mantido para rastreio e para permitir
+  /// reverter a decisão de resolver por documento sem perder dado.
   pessoaId   String?
-  /// Documento a partir do qual o registro foi feito, mantido por rastreio.
+  /// **Dono do período.** A categoria é do DOCUMENTO: o CPF pode ser iniciante
+  /// enquanto o CNPJ já é veterano, porque é assim que a promoção funciona.
   vendedorId String?
   categoria  CategoriaVendedor
   vigenteDe  DateTime          @db.Date
@@ -407,9 +427,9 @@ model VendedorAlocacaoHistorico {
 /// permanentemente na cota — encerrar a recuperação não desmarca nada.
 model VendedorRecuperacao {
   id          String    @id @default(cuid())
-  /// Dono do período. Vale para todos os documentos da pessoa.
+  /// Pessoa a que o documento pertence. Mantido para rastreio.
   pessoaId    String?
-  /// Documento a partir do qual o registro foi feito, mantido por rastreio.
+  /// **Dono do período.** A recuperação é do DOCUMENTO, como a categoria.
   vendedorId  String?
   dataInicio  DateTime  @db.Date
   dataFim     DateTime  @db.Date

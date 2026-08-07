@@ -632,10 +632,15 @@ fase entrega valor sozinha.
 - [ ] Tela de configuração das regras *(hoje só por SQL / seed)*
 - [ ] Demais constantes de regra ainda no código
 
-### Fase 3 — Comercial por documento (P1) *(bloqueada — depende de P1)*
-- [ ] Migração das vigências de Pessoa → Documento *(backfill não destrutivo)*
-- [ ] Invariante 1 CPF + 2 CNPJ no domínio e no banco
-- [ ] Ficha da pessoa: consolidado + histórico por documento
+### Fase 3 — Comercial por documento *(em andamento)*
+- [x] Migração das vigências de Pessoa → Documento *(backfill replica, não move)*
+- [x] Invariante 1 CPF + 2 CNPJ — CPF no banco, CNPJ no domínio
+- [x] Regras da trilha: documento que vende, venda em documento encerrado
+- [x] Regras de promoção com metas por vigência
+- [ ] `MetaPromocao` persistida e tela de configuração das metas
+- [ ] Consolidado da pessoa (volume da carteira completa)
+- [ ] Alerta de venda em documento encerrado
+- [ ] Lista por pessoa e ficha com os documentos
 
 ### Fase 4 — Eventos na importação *(parcial)*
 - [x] Base CSV publica `cota.criada`, `cota.alterada`, `cota.cancelada`, `cota.contemplada`
