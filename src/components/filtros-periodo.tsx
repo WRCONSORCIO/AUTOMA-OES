@@ -12,7 +12,21 @@ export interface ConfiguracaoFiltros {
   administradoras?: OpcaoFiltro[];
   gerencias?: OpcaoFiltro[];
   equipes?: OpcaoFiltro[];
+  /**
+   * Filtro por DOCUMENTO. Vale onde o documento é o assunto — o relatório da
+   * administradora vem por CNPJ, e somar os documentos ali esconderia por qual
+   * deles o dinheiro entrou.
+   */
   vendedores?: OpcaoFiltro[];
+  /**
+   * Filtro por PESSOA, somando os documentos dela.
+   *
+   * É o que a carteira precisa: quem procura as vendas de alguém quer todas,
+   * não as de um dos logins. Listar documento fazia a mesma pessoa aparecer
+   * duas vezes na lista, e escolher uma das entradas escondia metade das
+   * vendas dela sem avisar.
+   */
+  pessoas?: OpcaoFiltro[];
   tipos?: OpcaoFiltro[];
 }
 
@@ -95,6 +109,19 @@ export function FiltrosPeriodo({
         </Campo>
       ) : null}
 
+      {opcoes.pessoas ? (
+        <Campo rotulo="Vendedor" className="w-52">
+          <Selecao name="pessoa" defaultValue={parametros.pessoa ?? ""}>
+            <option value="">Todos</option>
+            {opcoes.pessoas.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.nome}
+              </option>
+            ))}
+          </Selecao>
+        </Campo>
+      ) : null}
+
       {opcoes.tipos ? (
         <Campo rotulo="Tipo" className="w-52">
           <Selecao name="tipo" defaultValue={parametros.tipo ?? ""}>
@@ -153,6 +180,7 @@ export function lerParametrosFiltro(
     gerencia: primeiro("gerencia"),
     equipe: primeiro("equipe"),
     vendedor: primeiro("vendedor"),
+    pessoa: primeiro("pessoa"),
     tipo: primeiro("tipo"),
     q: primeiro("q"),
   };

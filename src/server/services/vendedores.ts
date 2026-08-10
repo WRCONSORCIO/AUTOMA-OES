@@ -8,6 +8,7 @@ import {
   normalizarDocumento,
 } from "@/lib/normalize";
 import {
+  CATEGORIAS_ALCANCADAS_PELA_RECUPERACAO,
   encontrarRecuperacaoNaData,
   inicioDoDiaUtc,
   resolverCategoriaNaData,
@@ -646,10 +647,18 @@ export async function registrarRecuperacao(
 
   // Vendas já importadas dentro do intervalo passam a ficar marcadas.
   // A marcação nunca é retirada depois.
+  //
+  // Só as de veterano e expert: a recuperação devolve comissão recebida da
+  // administradora, e a venda de iniciante é paga pela WR — não há o que
+  // cobrar de volta. Venda sem categoria congelada fica de fora pelo mesmo
+  // motivo que em toda parte: marcar sem saber é supor, e a suposição aqui
+  // custa dinheiro de alguém. O reapuramento marca depois, se a categoria for
+  // preenchida.
   const marcadas = await prisma.cota.updateMany({
     where: {
       vendedorEfetivoId: { in: documentos.map((documento) => documento.id) },
       emRecuperacao: false,
+      categoriaVenda: { in: [...CATEGORIAS_ALCANCADAS_PELA_RECUPERACAO] },
       dataVenda: {
         gte: inicioDoDiaUtc(dataInicio),
         lte: inicioDoDiaUtc(dataFim),
