@@ -187,12 +187,16 @@ async function recalcularLancamentos(
         dataVenda: true,
         dataReferencia: true,
         vendedorId: true,
+        equipeId: true,
+        gerenciaId: true,
         cotaRef: {
           select: {
             categoriaVenda: true,
             emRecuperacao: true,
             dataVenda: true,
             segmentoVenda: true,
+            equipeId: true,
+            gerenciaId: true,
           },
         },
         comissaoWr: {
@@ -227,6 +231,26 @@ async function recalcularLancamentos(
 
       const segmento = lancamento.cotaRef?.segmentoVenda ?? lancamento.segmentoVenda;
 
+      // Equipe e gerência do lançamento.
+      //
+      // O lançamento nasce com a alocação que o vendedor tinha no momento da
+      // IMPORTAÇÃO. Quando o cadastro é completado depois — que é o fluxo
+      // normal, e o motivo de este recálculo existir — ela nasce nula e
+      // continuaria nula para sempre. É o que esvaziava o rateio por equipe e
+      // por gerência no Dashboard.
+      //
+      // A cota é a fonte preferida, porque nela a alocação é o snapshot da
+      // venda. Sem cota vinculada, resolve-se pelo histórico do vendedor na
+      // data — nunca pela alocação de hoje, que reescreveria o passado.
+      let equipeId = lancamento.equipeId ?? lancamento.cotaRef?.equipeId ?? null;
+      let gerenciaId = lancamento.gerenciaId ?? lancamento.cotaRef?.gerenciaId ?? null;
+
+      if ((!equipeId || !gerenciaId) && lancamento.vendedorId && dataVenda) {
+        const alocacao = await cache.alocacaoNaData(lancamento.vendedorId, dataVenda);
+        equipeId = equipeId ?? alocacao.equipeId;
+        gerenciaId = gerenciaId ?? alocacao.gerenciaId;
+      }
+
       const calculo = calcularComissaoWr({
         valorComissao: Number(lancamento.valorComissao),
         valorDsr: lancamento.valorDsr === null ? null : Number(lancamento.valorDsr),
@@ -250,6 +274,8 @@ async function recalcularLancamentos(
         categoria !== lancamento.categoriaVenda ||
         emRecuperacao !== lancamento.emRecuperacao ||
         segmento !== lancamento.segmentoVenda ||
+        equipeId !== lancamento.equipeId ||
+        gerenciaId !== lancamento.gerenciaId ||
         atual === null ||
         Number(atual.valor) !== calculo.valor ||
         atual.regra !== calculo.regra;
@@ -259,7 +285,13 @@ async function recalcularLancamentos(
       await prisma.$transaction(async (tx) => {
         await tx.comissaoRegistro.update({
           where: { id: lancamento.id },
-          data: { categoriaVenda: categoria, emRecuperacao, segmentoVenda: segmento },
+          data: {
+            categoriaVenda: categoria,
+            emRecuperacao,
+            segmentoVenda: segmento,
+            equipeId,
+            gerenciaId,
+          },
         });
 
         const dadosWr = {
