@@ -2,7 +2,7 @@ import "server-only";
 
 import { Prisma, type CategoriaVendedor } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { calcularComissaoWr } from "@/server/domain/regras";
+import { calcularComissaoWr, recuperacaoAlcancaVenda } from "@/server/domain/regras";
 import { registrarAuditoria } from "./auditoria";
 import { apurarComissoesEquipe } from "./comissao-equipe";
 import { CacheVendedores, type ContextoUsuario } from "./vendedores";
@@ -123,16 +123,23 @@ async function preencherSnapshotsDeCotas(
 
       const dados: Prisma.CotaUpdateInput = {};
 
-      if (!cota.categoriaVenda) {
+      let categoriaVenda = cota.categoriaVenda;
+
+      if (!categoriaVenda) {
         const categoria = await cache.categoriaNaData(vendedorId, dataVenda);
         if (categoria) {
+          categoriaVenda = categoria;
           dados.categoriaVenda = categoria;
           dados.categoriaVendaFixadaEm = new Date();
           resumo.cotasComCategoriaPreenchida += 1;
         }
       }
 
-      if (!cota.emRecuperacao) {
+      // Usa a categoria recém-resolvida, e não a que veio do banco: é
+      // justamente a venda que acabou de ganhar categoria que estava esperando
+      // para ser avaliada. Ler o valor antigo adiaria a marcação para a
+      // próxima passada, sem motivo.
+      if (!cota.emRecuperacao && recuperacaoAlcancaVenda(categoriaVenda)) {
         const recuperacao = await cache.recuperacaoNaData(vendedorId, dataVenda);
         if (recuperacao) {
           dados.emRecuperacao = true;

@@ -9,6 +9,7 @@ import {
   chaveIdentidadeCota,
   hashConteudo,
   montarIdentidadeCota,
+  recuperacaoAlcancaVenda,
   resolverVendedorEfetivo,
 } from "@/server/domain/regras";
 import { evento, type NovoEvento } from "@/shared/events/catalogo";
@@ -564,8 +565,13 @@ async function planejarCriacao(
 
   if (efetivo.vendedorId && dataVenda) {
     categoriaVenda = await ctx.cache.categoriaNaData(efetivo.vendedorId, dataVenda);
-    const recuperacao = await ctx.cache.recuperacaoNaData(efetivo.vendedorId, dataVenda);
-    recuperacaoId = recuperacao?.id ?? null;
+
+    // A recuperação só alcança venda de veterano e expert: é comissão recebida
+    // da administradora que se devolve, e iniciante não recebe dela.
+    if (recuperacaoAlcancaVenda(categoriaVenda)) {
+      const recuperacao = await ctx.cache.recuperacaoNaData(efetivo.vendedorId, dataVenda);
+      recuperacaoId = recuperacao?.id ?? null;
+    }
   }
 
   // A alocação sai do histórico do documento resolvido NA DATA DA VENDA, com a

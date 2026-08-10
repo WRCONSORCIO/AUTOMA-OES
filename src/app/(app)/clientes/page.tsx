@@ -65,7 +65,12 @@ export default async function PaginaClientes({
       ? { dataVenda: { ...(de ? { gte: de } : {}), ...(ate ? { lte: ate } : {}) } }
       : {}),
     ...(parametros.administradora ? { administradoraId: parametros.administradora } : {}),
-    ...(parametros.vendedor ? { vendedorEfetivoId: parametros.vendedor } : {}),
+    // O filtro é da PESSOA, e alcança todos os documentos dela. Filtrar por
+    // documento fazia a mesma pessoa aparecer duas vezes na lista e, escolhida
+    // uma das entradas, escondia as vendas feitas pelo outro login sem avisar.
+    ...(parametros.pessoa
+      ? { vendedorEfetivo: { pessoaId: parametros.pessoa } }
+      : {}),
     ...(escopo.gerenciaId ?? parametros.gerencia
       ? { gerenciaId: escopo.gerenciaId ?? parametros.gerencia }
       : {}),
@@ -87,7 +92,7 @@ export default async function PaginaClientes({
       : {}),
   };
 
-  const [cotas, total, resumo, administradoras, gerencias, equipes, vendedores] =
+  const [cotas, total, resumo, administradoras, gerencias, equipes, pessoas] =
     await Promise.all([
       prisma.cota.findMany({
         where,
@@ -109,7 +114,9 @@ export default async function PaginaClientes({
           categoriaVenda: true,
           origemVendedor: true,
           administradora: { select: { nome: true } },
-          vendedorEfetivo: { select: { nome: true } },
+          vendedorEfetivo: {
+            select: { nome: true, pessoa: { select: { nome: true } } },
+          },
           equipe: { select: { nome: true } },
           gerencia: { select: { nome: true } },
         },
@@ -133,12 +140,19 @@ export default async function PaginaClientes({
         select: { id: true, nome: true },
         orderBy: { nome: "asc" },
       }),
-      prisma.vendedor.findMany({
+      // Uma entrada por PESSOA. A lista antes vinha de `Vendedor`, e por isso
+      // repetia quem tem CPF e CNPJ — foi o que apareceu na tela: o mesmo nome
+      // duas vezes, às vezes com grafias ligeiramente diferentes.
+      prisma.pessoa.findMany({
         where: {
-          ...(escopo.equipeId ? { equipeId: escopo.equipeId } : {}),
-          ...(escopo.gerenciaId ? { gerenciaId: escopo.gerenciaId } : {}),
+          documentos: {
+            some: {
+              ...(escopo.equipeId ? { equipeId: escopo.equipeId } : {}),
+              ...(escopo.gerenciaId ? { gerenciaId: escopo.gerenciaId } : {}),
+            },
+          },
         },
-        select: { id: true, nome: true },
+        select: { id: true, nome: true, _count: { select: { documentos: true } } },
         orderBy: { nome: "asc" },
       }),
     ]);
@@ -154,7 +168,20 @@ export default async function PaginaClientes({
         acao="/clientes"
         parametros={parametros}
         mostrarBusca
-        opcoes={{ administradoras, gerencias, equipes, vendedores }}
+        opcoes={{
+          administradoras,
+          gerencias,
+          equipes,
+          pessoas: pessoas.map((pessoa) => ({
+            id: pessoa.id,
+            // O número de documentos vai no rótulo porque muda o que a escolha
+            // significa: com dois, a seleção soma dois logins.
+            nome:
+              pessoa._count.documentos > 1
+                ? `${pessoa.nome} (${pessoa._count.documentos} documentos)`
+                : pessoa.nome,
+          })),
+        }}
       />
 
       <section className="grid gap-4 sm:grid-cols-2">
@@ -209,12 +236,28 @@ export default async function PaginaClientes({
                     </Td>
                     <Td className="numerico">{cota.contrato}</Td>
                     <Td>{cota.administradora.nome}</Td>
-                    <Td className="max-w-44 truncate">
-                      {cota.vendedorEfetivo?.nome ?? "—"}
-                      {cota.origemVendedor === "OVERRIDE_WR" ? (
-                        <Badge tom="marca" className="ml-2">
-                          WR
-                        </Badge>
+                    {/*
+                      A pessoa em cima, o login usado embaixo. A venda é da
+                      pessoa; por qual documento ela entrou continua importando
+                      para a comissão, mas é detalhe da venda, não a identidade
+                      de quem vendeu.
+                    */}
+                    <Td className="max-w-44">
+                      <span className="block truncate">
+                        {cota.vendedorEfetivo?.pessoa?.nome ??
+                          cota.vendedorEfetivo?.nome ??
+                          "—"}
+                        {cota.origemVendedor === "OVERRIDE_WR" ? (
+                          <Badge tom="marca" className="ml-2">
+                            WR
+                          </Badge>
+                        ) : null}
+                      </span>
+                      {cota.vendedorEfetivo?.pessoa &&
+                      cota.vendedorEfetivo.pessoa.nome !== cota.vendedorEfetivo.nome ? (
+                        <span className="block truncate text-xs text-[var(--color-texto-3)]">
+                          {cota.vendedorEfetivo.nome}
+                        </span>
                       ) : null}
                     </Td>
                     <Td>{cota.equipe?.nome ?? "—"}</Td>

@@ -112,6 +112,44 @@ export function encontrarRecuperacaoNaData(
   return candidatos[0] ?? null;
 }
 
+/**
+ * Categorias de venda que a recuperação alcança.
+ *
+ * A recuperação existe para uma coisa só: devolver comissão já recebida. Quem
+ * recebe direto da administradora é veterano e expert — a venda de iniciante é
+ * paga pela WR e não é cobrada de volta. Marcar uma venda de iniciante como
+ * "em recuperação" afirmaria um fato que não corresponde a nada.
+ *
+ * Isto NÃO é o percentual nem o limite de parcelas, que continuam
+ * parametrizados em `RegraEstorno` e resolvidos por vigência. É o alcance do
+ * conceito: quem não recebeu da administradora não tem o que devolver.
+ *
+ * A guarda vale na MARCAÇÃO, e não só no cálculo. Confiar em `categoriasVenda`
+ * da regra funcionaria enquanto alguém lembrasse de preencher as duas
+ * categorias na tela; uma regra cadastrada sem categoria nenhuma vale para
+ * todas, e aí a venda de iniciante marcada indevidamente viraria estorno.
+ */
+export const CATEGORIAS_ALCANCADAS_PELA_RECUPERACAO = ["VETERANO", "EXPERT"] as const;
+
+export type CategoriaComRecuperacao =
+  (typeof CATEGORIAS_ALCANCADAS_PELA_RECUPERACAO)[number];
+
+/**
+ * A recuperação alcança esta venda?
+ *
+ * Venda sem categoria congelada devolve `false`: sem saber sob qual condição
+ * ela foi feita, marcar seria suposição — e a suposição aqui custa dinheiro de
+ * alguém. O reapuramento marca depois, quando a categoria for preenchida.
+ */
+export function recuperacaoAlcancaVenda(
+  categoriaVenda: string | null | undefined,
+): boolean {
+  if (!categoriaVenda) return false;
+  return (CATEGORIAS_ALCANCADAS_PELA_RECUPERACAO as readonly string[]).includes(
+    categoriaVenda,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // REGRA: estorno
 //
