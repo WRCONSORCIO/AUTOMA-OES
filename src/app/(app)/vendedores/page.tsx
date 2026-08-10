@@ -7,7 +7,7 @@ import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatarDocumento } from "@/lib/normalize";
 import { formatarData, formatarMoeda, formatarNumero } from "@/lib/format";
-import { inteiro, texto, type ParametrosBusca } from "@/lib/filtros";
+import { digitosDaBusca, inteiro, texto, type ParametrosBusca } from "@/lib/filtros";
 import {
   Aviso,
   Badge,
@@ -69,17 +69,30 @@ export default async function PaginaVendedores({
     ...(escopo.equipeId ? { equipeId: escopo.equipeId } : {}),
     ...(categoria ? { categoriaAtual: categoria as "INICIANTE" } : {}),
     ...(situacao ? { situacao: situacao as "ATIVO" } : {}),
-    ...(busca
-      ? {
-          OR: [
-            { nome: { contains: busca, mode: "insensitive" } },
-            { cpfCnpj: { contains: busca.replace(/\D+/g, "") } },
-          ],
-        }
-      : {}),
   };
 
-  const where: Prisma.PessoaWhereInput = { documentos: { some: filtroDocumento } };
+  const digitos = digitosDaBusca(busca);
+
+  // A busca é da PESSOA, não do documento. Quem procura "Silva" quer a pessoa
+  // que aparece na lista, e o nome exibido é o dela — casar só contra o nome
+  // do documento deixaria de fora quem teve o cadastro corrigido num lugar e
+  // não no outro.
+  const filtroBusca: Prisma.PessoaWhereInput = busca
+    ? {
+        OR: [
+          { nome: { contains: busca, mode: "insensitive" } },
+          { documentos: { some: { nome: { contains: busca, mode: "insensitive" } } } },
+          // Só quando o termo tem dígitos: sem esta guarda, buscar por nome
+          // resultava em `contains: ""`, que casa com tudo e anulava o filtro.
+          ...(digitos ? [{ documentos: { some: { cpfCnpj: { contains: digitos } } } }] : []),
+        ],
+      }
+    : {};
+
+  const where: Prisma.PessoaWhereInput = {
+    documentos: { some: filtroDocumento },
+    ...filtroBusca,
+  };
 
   const [pessoas, total, semPessoa, equipes, gerencias] = await Promise.all([
     prisma.pessoa.findMany({

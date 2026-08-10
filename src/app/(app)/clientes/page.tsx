@@ -6,7 +6,12 @@ import { escopoDoUsuario } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatarDocumento, parseDataBr } from "@/lib/normalize";
 import { formatarData, formatarMoeda, formatarNumero } from "@/lib/format";
-import { inteiro, periodoPadrao, type ParametrosBusca } from "@/lib/filtros";
+import {
+  digitosDaBusca,
+  inteiro,
+  periodoPadrao,
+  type ParametrosBusca,
+} from "@/lib/filtros";
 import {
   Badge,
   Cabecalho,
@@ -53,6 +58,8 @@ export default async function PaginaClientes({
   const de = brutos.de ? parseDataBr(parametros.de) : null;
   const ate = brutos.ate ? parseDataBr(parametros.ate) : null;
 
+  const digitos = digitosDaBusca(parametros.q);
+
   const where: Prisma.CotaWhereInput = {
     ...(de || ate
       ? { dataVenda: { ...(de ? { gte: de } : {}), ...(ate ? { lte: ate } : {}) } }
@@ -69,10 +76,12 @@ export default async function PaginaClientes({
       ? {
           OR: [
             { nomeCliente: { contains: parametros.q, mode: "insensitive" } },
-            { cpfCnpjCliente: { contains: parametros.q.replace(/\D+/g, "") } },
             { contrato: { contains: parametros.q, mode: "insensitive" } },
             { grupo: { contains: parametros.q } },
             { cota: { contains: parametros.q } },
+            // Mesmo defeito que estava na tela de vendedores: sem os dígitos,
+            // `contains: ""` casa com toda a carteira e anula o `OR` inteiro.
+            ...(digitos ? [{ cpfCnpjCliente: { contains: digitos } }] : []),
           ],
         }
       : {}),

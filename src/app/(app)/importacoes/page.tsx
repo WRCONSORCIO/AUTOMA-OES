@@ -10,6 +10,10 @@ import {
 } from "@/lib/format";
 import { inteiro, type ParametrosBusca } from "@/lib/filtros";
 import {
+  estadoDaImportacao,
+  MINUTOS_ATE_CONSIDERAR_INTERROMPIDA,
+} from "@/server/domain/importacao-estado";
+import {
   Aviso,
   Badge,
   Cabecalho,
@@ -34,10 +38,17 @@ const POR_PAGINA = 25;
 const TOM_STATUS = {
   PENDENTE: "neutro",
   PROCESSANDO: "marca",
+  INTERROMPIDA: "critico",
   CONCLUIDA: "bom",
   CONCLUIDA_COM_ERROS: "atencao",
   FALHA: "critico",
 } as const;
+
+const EXPLICACAO_INTERROMPIDA =
+  "O processo morreu antes de terminar — quase sempre por estourar o limite de " +
+  "execução do servidor. A parte que já tinha entrado está gravada. Importar o " +
+  "mesmo arquivo de novo é seguro: o que já entrou volta como inalterado e a " +
+  "importação continua de onde parou.";
 
 export default async function PaginaImportacoes({
   searchParams,
@@ -48,7 +59,14 @@ export default async function PaginaImportacoes({
   const brutos = await searchParams;
   const pagina = inteiro(brutos, "pagina", 1);
 
-  const [importacoes, total, administradoras] = await Promise.all([
+  // Importações que morreram no meio. A pergunta vale para a base inteira, não
+  // só para a página aberta: quem acabou de perder uma importação não vai
+  // paginar atrás dela.
+  const limiteInterrompida = new Date(
+    Date.now() - MINUTOS_ATE_CONSIDERAR_INTERROMPIDA * 60_000,
+  );
+
+  const [importacoes, total, administradoras, interrompidas] = await Promise.all([
     prisma.importacao.findMany({
       include: {
         administradora: { select: { nome: true } },
@@ -63,6 +81,9 @@ export default async function PaginaImportacoes({
       where: { status: "ATIVO" },
       select: { id: true, nome: true },
       orderBy: { nome: "asc" },
+    }),
+    prisma.importacao.count({
+      where: { status: "PROCESSANDO", iniciadoEm: { lt: limiteInterrompida } },
     }),
   ]);
 
@@ -79,6 +100,15 @@ export default async function PaginaImportacoes({
         <Aviso tom="atencao">
           Nenhuma administradora cadastrada. Rode a carga inicial (`npm run db:seed`) ou cadastre
           uma administradora antes de importar arquivos.
+        </Aviso>
+      ) : null}
+
+      {interrompidas > 0 ? (
+        <Aviso tom="critico">
+          {interrompidas === 1
+            ? "Uma importação foi interrompida antes de terminar."
+            : `${interrompidas} importações foram interrompidas antes de terminar.`}{" "}
+          {EXPLICACAO_INTERROMPIDA}
         </Aviso>
       ) : null}
 
@@ -165,9 +195,21 @@ export default async function PaginaImportacoes({
                       )}
                     </Td>
                     <Td>
-                      <Badge tom={TOM_STATUS[importacao.status]}>
-                        {importacao.status.replaceAll("_", " ")}
-                      </Badge>
+                      {(() => {
+                        // O estado é DEDUZIDO, não lido: uma importação cujo
+                        // processo morreu no meio fica gravada como
+                        // PROCESSANDO para sempre, e a tela mostraria trabalho
+                        // em andamento onde há uma falha silenciosa.
+                        const estado = estadoDaImportacao(importacao);
+                        return (
+                          <Badge
+                            tom={TOM_STATUS[estado]}
+                            title={estado === "INTERROMPIDA" ? EXPLICACAO_INTERROMPIDA : undefined}
+                          >
+                            {estado.replaceAll("_", " ")}
+                          </Badge>
+                        );
+                      })()}
                     </Td>
                   </Tr>
                 ))

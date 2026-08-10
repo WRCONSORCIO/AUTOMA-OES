@@ -26,6 +26,28 @@ export function inteiro(
   return Math.max(minimo, Math.trunc(valor));
 }
 
+/**
+ * Os dígitos do termo buscado, ou `null` quando não há nenhum.
+ *
+ * Existe por causa de um defeito que passou despercebido em duas telas ao
+ * mesmo tempo. Buscar documento por `contains: termo.replace(/\D+/g, "")`
+ * parece inofensivo, mas quando o termo é um nome o resultado da limpeza é
+ * string vazia — e `contains: ""` vira `LIKE '%%'`, que casa com **todas** as
+ * linhas. Como a condição entrava num `OR`, a busca inteira passava a não
+ * filtrar nada: procurar "SILVA" entre 128 vendedores devolvia os 128.
+ *
+ * O sintoma enganava: parecia que a busca por nome estava quebrada e só a por
+ * documento funcionava. Era o contrário — a por nome funcionava, e a por
+ * documento anulava o resultado dela.
+ *
+ * Devolver `null` obriga quem chama a decidir explicitamente, em vez de deixar
+ * uma string vazia atravessar a consulta parecendo um filtro.
+ */
+export function digitosDaBusca(termo: string | undefined): string | null {
+  const digitos = (termo ?? "").replace(/\D+/g, "");
+  return digitos.length > 0 ? digitos : null;
+}
+
 /** Primeiro e último dia do mês corrente, usados como período padrão. */
 export function periodoPadrao(): { de: Date; ate: Date } {
   const agora = new Date();
