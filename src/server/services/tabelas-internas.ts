@@ -27,10 +27,26 @@ import {
  */
 export async function semearTabelasInternas(
   usuario: ContextoUsuario,
-  vigenteDe = new Date(),
+  vigenteDe?: Date,
 ): Promise<{ tabelasCriadas: number; faixasCriadas: number; flexCriadas: number }> {
+  // A vigência começa na VENDA MAIS ANTIGA da base, não hoje.
+  //
+  // Vinha de hoje, e o efeito era uma armadilha silenciosa: a carga inicial
+  // criava as dez tabelas, a tela dizia que estava tudo cadastrado, e nenhuma
+  // venda já importada era alcançada — porque todas são anteriores. O usuário
+  // ficava com percentuais corretos e comissão zero, sem nada apontando o
+  // motivo.
+  //
+  // Base vazia continua começando hoje: aí não há passado a cobrir.
+  const referencia =
+    vigenteDe ??
+    (
+      await prisma.cota.aggregate({ _min: { dataVenda: true } })
+    )._min.dataVenda ??
+    new Date();
+
   const inicio = new Date(
-    Date.UTC(vigenteDe.getUTCFullYear(), vigenteDe.getUTCMonth(), vigenteDe.getUTCDate()),
+    Date.UTC(referencia.getUTCFullYear(), referencia.getUTCMonth(), referencia.getUTCDate()),
   );
 
   let tabelasCriadas = 0;

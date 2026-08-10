@@ -3,17 +3,21 @@ import "server-only";
 import {
   Prisma,
   type CategoriaVendedor,
+  type DestinoComissao,
   type PapelComissao,
   type SegmentoVenda,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizarTexto } from "@/lib/normalize";
+import { type ContextoVenda } from "@/server/domain/comissao-equipe";
 import {
-  apurarComissaoEquipe,
-  calcularLiberado,
-  type ContextoVenda,
-  type RegraPapel,
-} from "@/server/domain/comissao-equipe";
+  apurarVendaPorParcelas,
+  resolverTabelaInterna,
+  ROTULO_DESTINO,
+  ROTULO_SEGMENTO,
+  type TabelaInterna,
+} from "@/server/domain/tabelas-internas";
+import { carregarTabelasInternas } from "./tabelas-internas";
 import { resolverPorVigencia } from "@/server/domain/vigencia";
 import { registrarAuditoria } from "./auditoria";
 import type { ContextoUsuario } from "./vendedores";
@@ -28,17 +32,6 @@ export interface ResumoApuracaoEquipe {
   linhasRemovidas: number;
   valorPrevisto: number;
   valorLiberado: number;
-}
-
-interface TabelaVigente {
-  id: string;
-  nome: string;
-  categoria: CategoriaVendedor;
-  segmento: SegmentoVenda | null;
-  vigenteDe: Date;
-  vigenteAte: Date | null;
-  parcelasParaLiberacao: number;
-  regras: RegraPapel[];
 }
 
 /**
@@ -68,7 +61,7 @@ export async function apurarComissoesEquipe(options?: {
     valorLiberado: 0,
   };
 
-  const tabelas = await carregarTabelasEquipe();
+  const tabelas = await carregarTabelasInternas();
   const unidades = await carregarUnidades();
 
   const filtroCotas: Prisma.CotaWhereInput = {
@@ -115,20 +108,6 @@ export async function apurarComissoesEquipe(options?: {
       resumo.cotasAvaliadas += 1;
 
       const categoria = cota.categoriaVenda!;
-      const tabela = resolverTabela(
-        tabelas,
-        categoria,
-        cota.segmentoVenda,
-        cota.dataVenda!,
-      );
-
-      if (!tabela) {
-        // Sem tabela vigente não há o que pagar: a apuração anterior sai junto.
-        resumo.cotasSemTabela += 1;
-        continue;
-      }
-
-      resumo.cotasComTabela += 1;
 
       const equipe = cota.equipeId ? unidades.equipes.get(cota.equipeId) : undefined;
       const gerencia = cota.gerenciaId ? unidades.gerencias.get(cota.gerenciaId) : undefined;
@@ -147,9 +126,31 @@ export async function apurarComissoesEquipe(options?: {
       };
 
       const parcelasRecebidas = recebidas.get(cota.id) ?? 0;
+      let rendeuAlgo = false;
 
-      for (const linha of apurarComissaoEquipe(tabela.regras, contexto)) {
-        const destino = destinatario(linha.papel, {
+      for (const { papel, destinoTabela } of papeisDaVenda(contexto)) {
+        const tabela = resolverTabelaInterna(
+          tabelas,
+          // O vendedor é pago pela tabela da CATEGORIA da venda; supervisão e
+          // gerência têm tabelas próprias, iguais para toda venda.
+          papel === "VENDEDOR" ? (categoria as DestinoComissao) : destinoTabela,
+          cota.segmentoVenda,
+          cota.dataVenda!,
+        );
+
+        if (!tabela) continue;
+
+        const apuracao = apurarVendaPorParcelas({
+          tabela,
+          valorCredito: Number(cota.valorCredito ?? 0),
+          percentualFlex: cota.temFlex && cota.taxaFlex ? Number(cota.taxaFlex) : null,
+          parcelasRecebidas,
+        });
+
+        if (apuracao.previsto === 0) continue;
+        rendeuAlgo = true;
+
+        const destino = destinatario(papel, {
           pessoaId: cota.vendedorEfetivo?.pessoaId ?? null,
           equipeId: cota.equipeId,
           gerenciaId: cota.gerenciaId,
@@ -157,23 +158,28 @@ export async function apurarComissoesEquipe(options?: {
 
         desejadas.push({
           cotaId: cota.id,
-          papel: linha.papel,
+          papel,
           categoriaVenda: categoria,
           ...destino,
-          baseCalculo: linha.baseCalculo,
-          percentual: linha.percentual,
-          valorPrevisto: linha.valor,
-          valorLiberado: calcularLiberado(
-            linha.valor,
-            parcelasRecebidas,
-            tabela.parcelasParaLiberacao,
-          ),
+          baseCalculo: apuracao.baseCalculo,
+          percentual: apuracao.percentualTotal,
+          valorPrevisto: apuracao.previsto,
+          valorLiberado: apuracao.liberado,
           parcelasRecebidas,
-          tabelaId: tabela.id,
-          regraId: linha.regraId,
-          regra: tabela.nome,
+          // A tabela de origem é a interna, que não é a referenciada pela
+          // chave estrangeira antiga. O nome legível vai no campo de texto,
+          // que é o que a tela mostra.
+          tabelaId: null,
+          regraId: null,
+          regra: `${ROTULO_DESTINO[papel === "VENDEDOR" ? (categoria as DestinoComissao) : destinoTabela]} · ${ROTULO_SEGMENTO[cota.segmentoVenda!]}`,
         });
       }
+
+      // "Com tabela" passa a significar "rendeu alguma linha". Antes bastava
+      // existir a tabela da categoria; agora cada papel resolve a sua, e uma
+      // venda pode ter a do vendedor e não a da gerência.
+      if (rendeuAlgo) resumo.cotasComTabela += 1;
+      else resumo.cotasSemTabela += 1;
     }
 
     resumo.linhasRemovidas += await removerObsoletas(gravadas, desejadas);
@@ -211,6 +217,35 @@ export async function apurarComissoesEquipe(options?: {
   return resumo;
 }
 
+/**
+ * Quais papéis a venda remunera.
+ *
+ * O vendedor sempre. A supervisão só quando ela e a gerência são unidades
+ * diferentes — quando a equipe leva o nome do próprio gerente, pagar os dois
+ * seria pagar a mesma pessoa duas vezes pela mesma venda. A gerência quando a
+ * venda tem gerência.
+ *
+ * Veterano e expert entram como vendedor do mesmo jeito, e é de propósito: a
+ * WR não desembolsa nada por essas vendas, mas precisa do valor calculado para
+ * saber quanto cobrar de volta quando a venda cai.
+ */
+function papeisDaVenda(
+  contexto: ContextoVenda,
+): { papel: PapelComissao; destinoTabela: DestinoComissao }[] {
+  const papeis: { papel: PapelComissao; destinoTabela: DestinoComissao }[] = [
+    { papel: "VENDEDOR", destinoTabela: "INICIANTE" },
+  ];
+
+  if (contexto.equipeId && !contexto.supervisaoIgualGerencia) {
+    papeis.push({ papel: "SUPERVISOR", destinoTabela: "SUPERVISOR" });
+  }
+  if (contexto.gerenciaId) {
+    papeis.push({ papel: "GERENCIA", destinoTabela: "GERENCIA" });
+  }
+
+  return papeis;
+}
+
 /** Quem recebe cada papel: o vendedor é pessoa, supervisão e gerência são unidades. */
 function destinatario(
   papel: PapelComissao,
@@ -240,8 +275,8 @@ interface LinhaDesejada {
   valorPrevisto: number;
   valorLiberado: number;
   parcelasRecebidas: number;
-  tabelaId: string;
-  regraId: string;
+  tabelaId: string | null;
+  regraId: string | null;
   regra: string;
 }
 
@@ -436,36 +471,22 @@ async function carregarUnidades(): Promise<{
   };
 }
 
-export async function carregarTabelasEquipe(): Promise<TabelaVigente[]> {
-  const tabelas = await prisma.tabelaComissaoEquipe.findMany({
-    where: { ativo: true },
-    include: { regras: { orderBy: { papel: "asc" } } },
-    orderBy: [{ categoria: "asc" }, { vigenteDe: "desc" }],
-  });
-
-  return tabelas.map((tabela) => ({
-    id: tabela.id,
-    nome: tabela.nome,
-    categoria: tabela.categoria,
-    segmento: tabela.segmento,
-    vigenteDe: tabela.vigenteDe,
-    vigenteAte: tabela.vigenteAte,
-    parcelasParaLiberacao: tabela.parcelasParaLiberacao,
-    regras: tabela.regras.map((regra) => ({
-      id: regra.id,
-      papel: regra.papel,
-      percentual: Number(regra.percentual),
-      condicao: regra.condicao,
-    })),
-  }));
-}
-
 export interface LacunaDeTabela {
-  categoria: CategoriaVendedor;
+  destino: DestinoComissao;
   segmento: SegmentoVenda | null;
   ano: number;
   vendas: number;
   credito: number;
+  /**
+   * `AUSENTE` = não há percentual cadastrado para o destino e o produto.
+   * `VIGENCIA` = há, mas começa depois das vendas deste ano.
+   *
+   * A distinção é o que separa "preencher a tabela" de "corrigir a data", que
+   * são trabalhos diferentes e levam a telas diferentes.
+   */
+  motivo: "AUSENTE" | "VIGENCIA";
+  /** Início da vigência mais antiga cadastrada, quando o motivo é VIGENCIA. */
+  vigenteDe: Date | null;
 }
 
 /**
@@ -473,15 +494,15 @@ export interface LacunaDeTabela {
  *
  * Sem isto, a falta de tabela é silenciosa: a venda tem categoria, tem
  * vendedor, tem equipe — e simplesmente não aparece comissão nenhuma, sem erro
- * e sem aviso. Quem cadastrou a tabela de uma categoria e esqueceu a de outra
- * não tem como descobrir a não ser desconfiando do total.
+ * e sem aviso. Quem cadastrou os percentuais de uma categoria e esqueceu os de
+ * outra não tem como descobrir a não ser desconfiando do total.
  *
- * O agrupamento é por categoria, segmento e ano porque é exatamente a chave de
- * uma tabela: quem lê o resultado sabe o que precisa cadastrar sem traduzir
- * nada.
+ * O agrupamento é por destino, segmento e ano porque é exatamente a chave de
+ * uma tabela na tela de Regras e percentuais: quem lê o resultado sabe o que
+ * preencher sem traduzir nada.
  */
 export async function lacunasDeTabela(): Promise<LacunaDeTabela[]> {
-  const tabelas = await carregarTabelasEquipe();
+  const tabelas = await carregarTabelasInternas();
 
   const grupos = await prisma.$queryRaw<
     {
@@ -511,31 +532,31 @@ export async function lacunasDeTabela(): Promise<LacunaDeTabela[]> {
     // aparece ou não conforme o mês; é aproximação assumida, e o preço de
     // errar é mostrar uma linha a mais para conferir — nunca esconder uma.
     const referencia = new Date(Date.UTC(grupo.ano, 6, 1));
-    if (resolverTabela(tabelas, grupo.categoria, grupo.segmento, referencia)) continue;
+    const destino = grupo.categoria as unknown as DestinoComissao;
+
+    if (resolverTabelaInterna(tabelas, destino, grupo.segmento, referencia)) continue;
+
+    // Existe tabela para a combinação, só não alcança esta data? É outro
+    // problema, com outra correção.
+    const doDestino = tabelas.filter(
+      (tabela) => tabela.destino === destino && tabela.segmento === grupo.segmento,
+    );
+    const maisAntiga = doDestino
+      .map((tabela) => tabela.vigenteDe)
+      .sort((a, b) => a.getTime() - b.getTime())[0];
 
     lacunas.push({
-      categoria: grupo.categoria,
+      destino,
       segmento: grupo.segmento,
       ano: grupo.ano,
       vendas: Number(grupo.vendas),
       credito: Number(grupo.credito),
+      motivo: doDestino.length > 0 ? "VIGENCIA" : "AUSENTE",
+      vigenteDe: maisAntiga ?? null,
     });
   }
 
   return lacunas;
-}
-
-/**
- * A tabela vigente na data da venda, específica do segmento quando existir.
- * Mesma resolução da tabela da WR — a regra de vigência é uma só.
- */
-function resolverTabela(
-  tabelas: TabelaVigente[],
-  categoria: CategoriaVendedor,
-  segmento: SegmentoVenda | null,
-  dataVenda: Date,
-): TabelaVigente | null {
-  return resolverPorVigencia(tabelas, categoria, segmento, dataVenda);
 }
 
 // ---------------------------------------------------------------------------

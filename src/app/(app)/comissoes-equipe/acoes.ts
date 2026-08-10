@@ -30,16 +30,15 @@ export async function acaoApurar(
     revalidatePath("/comissoes-equipe");
 
     if (resumo.cotasComTabela === 0) {
-      // O nome do formulário vai na mensagem porque a tela tem dois parecidos:
-      // "Nova tabela de comissão" é o que a WR RECEBE da administradora, e
-      // "Nova tabela de comissão da equipe" é o que a WR PAGA. Preencher o
-      // primeiro achando que era o segundo deixa exatamente este resultado.
+      // A mensagem nomeia a tela e a aba porque "não tem tabela" é indistinguível,
+      // para quem lê, de "tem tabela mas a vigência não alcança a venda" — e a
+      // segunda é a causa mais provável depois que os percentuais existem.
       return {
         erro:
           `Nenhuma das ${formatarNumero(resumo.cotasAvaliadas)} venda(s) tem tabela vigente para ` +
-          'a sua categoria. Em Tabelas e Flex, use o formulário "Nova tabela de comissão da ' +
-          'equipe" — não o "Nova tabela de comissão". O aviso no topo desta tela lista ' +
-          "quais categorias e anos faltam.",
+          "a sua categoria. Confira os percentuais em Administração → Regras e percentuais, " +
+          "aba Comissões — inclusive a data de vigência, que precisa começar antes da venda " +
+          "mais antiga. O aviso no topo desta tela lista o que falta.",
       };
     }
 

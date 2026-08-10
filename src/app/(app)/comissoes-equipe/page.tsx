@@ -4,7 +4,9 @@ import { exigirPermissao } from "@/server/auth/session";
 import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { parseDataBr } from "@/lib/normalize";
-import { formatarMoeda, formatarNumero, formatarPercentual } from "@/lib/format";
+import { formatarMoeda, formatarNumero, formatarPercentual,
+  formatarData,
+} from "@/lib/format";
 import { periodoPadrao, texto, type ParametrosBusca } from "@/lib/filtros";
 import {
   Aviso,
@@ -27,9 +29,10 @@ import { Indicador } from "@/components/indicador";
 import { FiltrosPeriodo, lerParametrosFiltro } from "@/components/filtros-periodo";
 import {
   carregarPainelComissaoEquipe,
-  carregarTabelasEquipe,
   lacunasDeTabela,
 } from "@/server/services/comissao-equipe";
+import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
+import { ROTULO_DESTINO, ROTULO_SEGMENTO } from "@/server/domain/tabelas-internas";
 import { BotaoApurar } from "./apurar";
 
 export const metadata: Metadata = { title: "Comissões da equipe" };
@@ -72,7 +75,7 @@ export default async function PaginaComissoesEquipe({
       },
       escopo,
     ),
-    carregarTabelasEquipe(),
+    carregarTabelasInternas(),
     lacunasDeTabela(),
     // Quantas tabelas do OUTRO tipo existem. Sem este número, quem cadastrou a
     // tabela errada lê "nenhuma tabela cadastrada" e conclui que o sistema
@@ -102,55 +105,42 @@ export default async function PaginaComissoesEquipe({
 
       {lacunas.length === 0 && tabelas.length === 0 ? (
         <Aviso tom="atencao">
-          Nenhuma tabela de comissão da equipe cadastrada, e nenhuma venda com categoria
-          resolvida. Comece pelas categorias em <strong>Comercial → Pendências de cadastro</strong>;
-          o que faltar de tabela aparece aqui depois.
+          Nenhum percentual cadastrado e nenhuma venda com categoria resolvida. Comece pelas
+          categorias em <strong>Comercial → Pendências de cadastro</strong>; o que faltar de
+          percentual aparece aqui depois.
         </Aviso>
       ) : null}
 
       {lacunas.length > 0 ? (
         <Aviso tom="atencao">
           <p>
-            {tabelas.length === 0 ? (
-              <>
-                Não há <strong>nenhuma tabela de comissão da equipe</strong> cadastrada.
-                {tabelasAdministradora > 0 ? (
-                  <>
-                    {" "}
-                    Atenção ao nome: existem {formatarNumero(tabelasAdministradora)} tabela(s) de{" "}
-                    <strong>comissão da administradora</strong> cadastradas, que são outra coisa —
-                    aquelas dizem o que a WR RECEBE por parcela; estas dizem o que a WR PAGA à
-                    própria equipe sobre a venda. São dois formulários diferentes na mesma tela.
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <>
-                Há vendas com categoria resolvida que continuam sem comissão porque{" "}
-                <strong>não existe tabela vigente</strong> para a combinação.
-              </>
-            )}{" "}
-            O sistema não arbitra percentual: sem tabela, não calcula.
-          </p>
-          <p className="mt-2">
-            Vá em <strong>Administração → Tabelas e Flex</strong> e use o formulário{" "}
-            <strong>“Nova tabela de comissão da equipe”</strong> — não o “Nova tabela de comissão”.
-            Falta cadastrar:
+            Estas vendas têm categoria resolvida e continuam sem comissão porque{" "}
+            <strong>não há percentual cadastrado</strong> para a combinação, ou porque a vigência
+            do que existe começa depois da venda. O sistema não arbitra percentual: sem tabela,
+            não calcula.
           </p>
           <ul className="mt-2 list-disc space-y-0.5 pl-5">
             {lacunas.map((lacuna) => (
-              <li key={`${lacuna.categoria}-${lacuna.segmento ?? "geral"}-${lacuna.ano}`}>
-                <strong>{lacuna.categoria}</strong>
-                {lacuna.segmento ? ` · ${lacuna.segmento}` : " · qualquer segmento"} · {lacuna.ano}
-                {" — "}
-                {formatarNumero(lacuna.vendas)} venda(s), {formatarMoeda(lacuna.credito)} de
-                crédito
+              <li key={`${lacuna.destino}-${lacuna.segmento ?? "geral"}-${lacuna.ano}`}>
+                <strong>{ROTULO_DESTINO[lacuna.destino]}</strong>
+                {lacuna.segmento
+                  ? ` · ${ROTULO_SEGMENTO[lacuna.segmento]}`
+                  : " · sem produto identificado"}{" "}
+                · {lacuna.ano} — {formatarNumero(lacuna.vendas)} venda(s),{" "}
+                {formatarMoeda(lacuna.credito)} de crédito
+                {lacuna.motivo === "VIGENCIA" && lacuna.vigenteDe ? (
+                  <span className="block text-xs">
+                    Os percentuais existem, mas valem só a partir de{" "}
+                    {formatarData(lacuna.vigenteDe)} — corrija a data de vigência.
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs">
-            A vigência da tabela precisa começar em uma data igual ou anterior à venda mais antiga
-            do ano listado — tabela que começa hoje não alcança venda de ano passado.
+          <p className="mt-2">
+            Ajuste em <strong>Administração → Regras e percentuais</strong>, aba{" "}
+            <strong>Comissões</strong>. A vigência precisa começar em data igual ou anterior à
+            venda mais antiga — percentual cadastrado hoje não alcança venda de ontem.
           </p>
         </Aviso>
       ) : null}
