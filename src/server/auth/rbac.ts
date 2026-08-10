@@ -27,16 +27,25 @@ export const MODULOS = [
 ] as const;
 
 export type Modulo = (typeof MODULOS)[number];
-export type Acao = "ver" | "criar" | "editar";
+/**
+ * `excluir` é para o que DESFAZ um fato já registrado — cancelar uma
+ * recuperação lançada por engano, por exemplo, que apaga estorno já calculado.
+ *
+ * Fica separada de `editar` de propósito. O RH corrige cadastro o dia inteiro
+ * e deve mesmo poder; desfazer uma cobrança é outra conversa, e não deveria
+ * vir junto só porque as duas coisas moram na mesma tela.
+ */
+export type Acao = "ver" | "criar" | "editar" | "excluir";
 
 type MatrizPerfil = Partial<Record<Modulo, readonly Acao[]>>;
 
 const TODAS: readonly Acao[] = ["ver", "criar", "editar"];
+const TUDO: readonly Acao[] = ["ver", "criar", "editar", "excluir"];
 const SOMENTE_LEITURA: readonly Acao[] = ["ver"];
 
 const MATRIZ: Record<PerfilUsuario, MatrizPerfil> = {
   ADMINISTRADOR: Object.fromEntries(
-    MODULOS.map((modulo) => [modulo, TODAS]),
+    MODULOS.map((modulo) => [modulo, TUDO]),
   ) as MatrizPerfil,
 
   GERENTE: {

@@ -10,6 +10,7 @@ import {
   alterarAlocacao,
   alterarCategoria,
   criarVendedor,
+  cancelarRecuperacao,
   registrarRecuperacao,
 } from "@/server/services/vendedores";
 
@@ -191,5 +192,60 @@ export async function acaoRegistrarRecuperacao(
     };
   } catch (erro) {
     return { erro: erro instanceof Error ? erro.message : "Falha ao registrar a recuperação." };
+  }
+}
+
+/**
+ * Cancela um registro de recuperação feito por engano.
+ *
+ * Exige permissão de EXCLUIR, e não de editar: desfaz um fato e mexe em
+ * estorno já calculado. Quem pode corrigir um cadastro não necessariamente
+ * pode desfazer uma cobrança.
+ */
+export async function acaoCancelarRecuperacao(
+  _anterior: EstadoAcao,
+  formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("vendedores", "excluir");
+
+  const vendedorId = String(formData.get("vendedorId") ?? "");
+  const recuperacaoId = String(formData.get("recuperacaoId") ?? "");
+  const motivo = String(formData.get("motivoCancelamento") ?? "").trim();
+
+  if (!recuperacaoId) return { erro: "Recuperação não informada." };
+  if (!motivo) return { erro: "Informe o motivo do cancelamento — ele fica na auditoria." };
+
+  try {
+    const resultado = await cancelarRecuperacao(recuperacaoId, motivo, {
+      id: sessao.id,
+      nome: sessao.nome,
+    });
+
+    revalidatePath(`/vendedores/${vendedorId}`);
+
+    const partes = [`${resultado.cotasDesmarcadas} venda(s) desmarcada(s)`];
+    if (resultado.cotasRemarcadas > 0) {
+      partes.push(
+        `${resultado.cotasRemarcadas} continua(m) marcada(s) por outro período`,
+      );
+    }
+    if (resultado.estornosRemovidos > 0) {
+      partes.push(`${resultado.estornosRemovidos} estorno(s) removido(s)`);
+    }
+    if (resultado.estornosAtualizados > 0) {
+      partes.push(`${resultado.estornosAtualizados} estorno(s) recalculado(s)`);
+    }
+    if (resultado.valorLiberado !== 0) {
+      partes.push(
+        `${resultado.valorLiberado.toLocaleString("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        })} deixaram de ser cobrados`,
+      );
+    }
+
+    return { sucesso: `Recuperação cancelada. ${partes.join(", ")}.` };
+  } catch (erro) {
+    return { erro: erro instanceof Error ? erro.message : "Falha ao cancelar a recuperação." };
   }
 }
