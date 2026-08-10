@@ -13,6 +13,8 @@ import {
   cancelarRecuperacao,
   registrarRecuperacao,
 } from "@/server/services/vendedores";
+import { recalcularComissoes } from "@/server/services/recalculo";
+import { formatarMoeda, formatarNumero } from "@/lib/format";
 
 export interface EstadoAcao {
   erro?: string;
@@ -123,20 +125,39 @@ export async function acaoAlterarCategoria(
   if (!CATEGORIAS.includes(categoria)) return { erro: "Categoria inválida." };
   if (!vigenteDe) return { erro: "Informe a data de início da nova categoria." };
 
+  const usuario = { id: sessao.id, nome: sessao.nome };
+
   try {
-    await alterarCategoria(id, categoria, vigenteDe, motivo, {
-      id: sessao.id,
-      nome: sessao.nome,
-    });
+    await alterarCategoria(id, categoria, vigenteDe, motivo, usuario);
+
+    // Sem este passo o cadastro fica certo e as vendas continuam "sem
+    // categoria de venda", que é a condição para a comissão nem ser tentada.
+    // Escopado ao documento: só as vendas dele mudaram de situação.
+    const resumo = await recalcularComissoes(usuario, { vendedorId: id });
+
+    revalidatePath(`/vendedores/${id}`);
+    revalidatePath("/vendedores");
+    revalidatePath("/pendencias");
+    revalidatePath("/comissoes-equipe");
+
+    const partes = [
+      `${formatarNumero(resumo.cotasComCategoriaPreenchida)} venda(s) passaram a ter categoria`,
+    ];
+    if (resumo.linhasComissaoEquipe > 0) {
+      partes.push(
+        `${formatarNumero(resumo.linhasComissaoEquipe)} linha(s) de comissão apuradas ` +
+          `(${formatarMoeda(resumo.valorComissaoEquipePrevisto)} previstos)`,
+      );
+    }
+
+    return {
+      sucesso:
+        `Categoria alterada. ${partes.join(", ")}. ` +
+        "As vendas anteriores continuam sendo calculadas com a categoria vigente na data de cada venda.",
+    };
   } catch (erro) {
     return { erro: erro instanceof Error ? erro.message : "Falha ao alterar a categoria." };
   }
-
-  revalidatePath(`/vendedores/${id}`);
-  return {
-    sucesso:
-      "Categoria alterada. As vendas anteriores continuam sendo calculadas com a categoria vigente na data de cada venda.",
-  };
 }
 
 export async function acaoAlterarAlocacao(

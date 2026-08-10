@@ -74,6 +74,7 @@ export const MODULOS_NAVEGACAO: readonly ModuloNavegacao[] = [
     modulo: "comissoesEquipe",
     itens: [
       { href: "/comissoes-equipe", rotulo: "A pagar", modulo: "comissoesEquipe" },
+      { href: "/estornos", rotulo: "Estornos", modulo: "comissoesEquipe" },
       { href: "/bonus", rotulo: "Bônus de incentivo", modulo: "comissoes" },
       // Fechamento da administradora. Mostra o que a WR RECEBE, que o briefing
       // manda não exibir — fica restrito ao perfil financeiro e é o candidato

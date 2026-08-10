@@ -36,8 +36,21 @@ export interface ResumoRecalculo {
  * - O valor da comissão WR é recalculado com a tabela vigente para a categoria
  *   daquela venda, nunca com a categoria atual do vendedor.
  */
+export interface EscopoRecalculo {
+  /**
+   * Limita o recálculo às vendas de um documento.
+   *
+   * É o caso de longe mais comum: alguém acabou de definir a categoria de um
+   * vendedor e as vendas dele precisam sair de "sem categoria". Varrer a base
+   * inteira para atender um cadastro faria o custo crescer com o tamanho do
+   * histórico em vez de com o tamanho da correção.
+   */
+  vendedorId?: string;
+}
+
 export async function recalcularComissoes(
   usuario: ContextoUsuario,
+  escopo: EscopoRecalculo = {},
 ): Promise<ResumoRecalculo> {
   const resumo: ResumoRecalculo = {
     cotasAvaliadas: 0,
@@ -54,12 +67,15 @@ export async function recalcularComissoes(
 
   const cache = new CacheVendedores(prisma);
 
-  await preencherSnapshotsDeCotas(cache, resumo);
-  await recalcularLancamentos(cache, resumo);
+  const cotasTocadas = await preencherSnapshotsDeCotas(cache, resumo, escopo);
+  await recalcularLancamentos(cache, resumo, escopo);
 
   // A comissão da equipe depende dos snapshots acima e dos recebimentos, então
   // vem sempre no fim — nunca antes de a categoria da venda estar resolvida.
-  const equipe = await apurarComissoesEquipe({ registrarAuditoria: false });
+  const equipe = await apurarComissoesEquipe({
+    ...(escopo.vendedorId ? { cotaIds: cotasTocadas } : {}),
+    registrarAuditoria: false,
+  });
   resumo.linhasComissaoEquipe = equipe.linhasGravadas;
   resumo.valorComissaoEquipePrevisto = equipe.valorPrevisto;
   resumo.valorComissaoEquipeLiberado = equipe.valorLiberado;
@@ -83,13 +99,17 @@ export async function recalcularComissoes(
 async function preencherSnapshotsDeCotas(
   cache: CacheVendedores,
   resumo: ResumoRecalculo,
-): Promise<void> {
+  escopo: EscopoRecalculo,
+): Promise<string[]> {
   let cursor: string | undefined;
+  const tocadas: string[] = [];
 
   for (;;) {
     const cotas = await prisma.cota.findMany({
       where: {
-        vendedorEfetivoId: { not: null },
+        ...(escopo.vendedorId
+          ? { vendedorEfetivoId: escopo.vendedorId }
+          : { vendedorEfetivoId: { not: null } }),
         dataVenda: { not: null },
         OR: [
           { categoriaVenda: null },
@@ -165,19 +185,24 @@ async function preencherSnapshotsDeCotas(
 
       if (Object.keys(dados).length > 0) {
         await prisma.cota.update({ where: { id: cota.id }, data: dados });
+        tocadas.push(cota.id);
       }
     }
   }
+
+  return tocadas;
 }
 
 async function recalcularLancamentos(
   cache: CacheVendedores,
   resumo: ResumoRecalculo,
+  escopo: EscopoRecalculo,
 ): Promise<void> {
   let cursor: string | undefined;
 
   for (;;) {
     const lancamentos = await prisma.comissaoRegistro.findMany({
+      ...(escopo.vendedorId ? { where: { vendedorId: escopo.vendedorId } } : {}),
       select: {
         id: true,
         parcela: true,

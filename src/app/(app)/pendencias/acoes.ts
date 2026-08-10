@@ -58,7 +58,10 @@ export async function acaoResolverPendencia(
       );
     }
 
-    const resumo = await recalcularComissoes(usuario);
+    // Escopado ao documento resolvido: varrer a base inteira a cada pendência
+    // fazia o custo crescer com o tamanho do histórico em vez de com o
+    // tamanho da correção.
+    const resumo = await recalcularComissoes(usuario, { vendedorId });
 
     revalidatePath("/pendencias");
     revalidatePath("/comissoes");
