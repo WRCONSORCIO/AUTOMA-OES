@@ -133,11 +133,11 @@ enum SegmentoVenda {
 
 /// A quem se refere cada tabela de comissão.
 ///
-/// Novato, supervisão e gerência são o que a WR PAGA. Veterano e expert são o
-/// que a administradora paga direto ao vendedor — a WR não desembolsa nada,
+/// Iniciante, supervisão e gerência são o que a WR PAGA. Veterano e expert são
+/// o que a administradora paga direto ao vendedor — a WR não desembolsa nada,
 /// mas precisa do valor para calcular o estorno quando a venda cai.
 enum DestinoComissao {
-  NOVATO
+  INICIANTE
   VETERANO
   EXPERT
   SUPERVISOR
@@ -899,7 +899,7 @@ model ComissaoWr {
 
 /// Percentuais de comissão por destino, produto e parcela.
 ///
-/// As cinco tabelas — novato, veterano, expert, supervisão e gerência — têm a
+/// As cinco tabelas — iniciante, veterano, expert, supervisão e gerência — têm a
 /// mesma forma: para cada segmento, um percentual por parcela recebida.
 /// Parcela sem percentual cadastrado não gera nada, e é assim que se configura
 /// "gerência só recebe na primeira" sem escrever isso em código.

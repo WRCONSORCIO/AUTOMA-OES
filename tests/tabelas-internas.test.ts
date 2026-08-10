@@ -44,8 +44,8 @@ function calcular(
 }
 
 describe("quem a WR paga", () => {
-  it("novato, supervisão e gerência", () => {
-    expect(wrPaga("NOVATO")).toBe(true);
+  it("iniciante, supervisão e gerência", () => {
+    expect(wrPaga("INICIANTE")).toBe(true);
     expect(wrPaga("SUPERVISOR")).toBe(true);
     expect(wrPaga("GERENCIA")).toBe(true);
   });
@@ -57,17 +57,17 @@ describe("quem a WR paga", () => {
 });
 
 describe("percentuais da carga inicial", () => {
-  it("novato imóveis: 0,5 / 0,4 / 0,3 / 0,3", () => {
+  it("iniciante imóveis: 0,5 / 0,4 / 0,3 / 0,3", () => {
     // Base de 100.000 (200.000 com flex 50).
-    expect(calcular("NOVATO", "IMOVEL", 1).valor).toBe(500);
-    expect(calcular("NOVATO", "IMOVEL", 2).valor).toBe(400);
-    expect(calcular("NOVATO", "IMOVEL", 3).valor).toBe(300);
-    expect(calcular("NOVATO", "IMOVEL", 4).valor).toBe(300);
+    expect(calcular("INICIANTE", "IMOVEL", 1).valor).toBe(500);
+    expect(calcular("INICIANTE", "IMOVEL", 2).valor).toBe(400);
+    expect(calcular("INICIANTE", "IMOVEL", 3).valor).toBe(300);
+    expect(calcular("INICIANTE", "IMOVEL", 4).valor).toBe(300);
   });
 
-  it("novato móveis: 0,4 nas três primeiras", () => {
-    expect(calcular("NOVATO", "AUTOMOVEL", 1).valor).toBe(400);
-    expect(calcular("NOVATO", "AUTOMOVEL", 3).valor).toBe(400);
+  it("iniciante móveis: 0,4 nas três primeiras", () => {
+    expect(calcular("INICIANTE", "AUTOMOVEL", 1).valor).toBe(400);
+    expect(calcular("INICIANTE", "AUTOMOVEL", 3).valor).toBe(400);
   });
 
   it("veterano imóveis pula a 2ª parcela", () => {
@@ -116,13 +116,13 @@ describe("imóvel e automóvel são tabelas separadas", () => {
 
 describe("a base é o crédito com o flex", () => {
   it("flex 50 reduz o crédito à metade", () => {
-    const resultado = calcular("NOVATO", "IMOVEL", 1, 500_000, 50);
+    const resultado = calcular("INICIANTE", "IMOVEL", 1, 500_000, 50);
     expect(resultado.baseCalculo).toBe(250_000);
     expect(resultado.valor).toBe(1_250);
   });
 
   it("sem flex a base é o crédito inteiro", () => {
-    const resultado = calcular("NOVATO", "IMOVEL", 1, 500_000, null);
+    const resultado = calcular("INICIANTE", "IMOVEL", 1, 500_000, null);
     expect(resultado.baseCalculo).toBe(500_000);
     expect(resultado.valor).toBe(2_500);
   });
@@ -131,7 +131,7 @@ describe("a base é o crédito com o flex", () => {
 describe("quando não há o que calcular", () => {
   it("venda sem produto identificado não gera comissão", () => {
     const resultado = calcularComissaoInterna({
-      destino: "NOVATO",
+      destino: "INICIANTE",
       segmento: null,
       parcela: 1,
       valorCredito: 200_000,
@@ -153,7 +153,7 @@ describe("vigência", () => {
     const futura: TabelaInterna[] = [
       {
         id: "f",
-        destino: "NOVATO",
+        destino: "INICIANTE",
         segmento: "IMOVEL",
         vigenteDe: dia("2027-01-01"),
         vigenteAte: null,
@@ -161,15 +161,15 @@ describe("vigência", () => {
       },
     ];
 
-    expect(resolverTabelaInterna(futura, "NOVATO", "IMOVEL", dia("2026-07-31"))).toBeNull();
-    expect(resolverTabelaInterna(futura, "NOVATO", "IMOVEL", dia("2027-06-01"))).not.toBeNull();
+    expect(resolverTabelaInterna(futura, "INICIANTE", "IMOVEL", dia("2026-07-31"))).toBeNull();
+    expect(resolverTabelaInterna(futura, "INICIANTE", "IMOVEL", dia("2027-06-01"))).not.toBeNull();
   });
 
   it("entre duas vigentes, vale a mais recente", () => {
     const duas: TabelaInterna[] = [
       {
         id: "antiga",
-        destino: "NOVATO",
+        destino: "INICIANTE",
         segmento: "IMOVEL",
         vigenteDe: dia("2026-01-01"),
         vigenteAte: null,
@@ -177,7 +177,7 @@ describe("vigência", () => {
       },
       {
         id: "nova",
-        destino: "NOVATO",
+        destino: "INICIANTE",
         segmento: "IMOVEL",
         vigenteDe: dia("2026-07-01"),
         vigenteAte: null,
@@ -185,6 +185,6 @@ describe("vigência", () => {
       },
     ];
 
-    expect(resolverTabelaInterna(duas, "NOVATO", "IMOVEL", dia("2026-07-31"))?.id).toBe("nova");
+    expect(resolverTabelaInterna(duas, "INICIANTE", "IMOVEL", dia("2026-07-31"))?.id).toBe("nova");
   });
 });
