@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import { exigirPermissao } from "@/server/auth/session";
 import { podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
-import { formatarBytes, formatarDataHora, formatarNumero } from "@/lib/format";
+import {
+  formatarBytes,
+  formatarDataHora,
+  formatarDuracao,
+  formatarNumero,
+} from "@/lib/format";
 import { inteiro, type ParametrosBusca } from "@/lib/filtros";
 import {
   Aviso,
@@ -88,6 +93,7 @@ export default async function PaginaImportacoes({
             <Cabecalho>
               <tr>
                 <Th>Data e hora</Th>
+                <Th className="text-right">Duração</Th>
                 <Th>Arquivo</Th>
                 <Th>Tipo</Th>
                 <Th>Administradora</Th>
@@ -104,12 +110,21 @@ export default async function PaginaImportacoes({
             </Cabecalho>
             <tbody>
               {importacoes.length === 0 ? (
-                <TabelaVazia colunas={13} mensagem="Nenhuma importação registrada." />
+                <TabelaVazia colunas={14} mensagem="Nenhuma importação registrada." />
               ) : (
                 importacoes.map((importacao) => (
                   <Tr key={importacao.id}>
                     <Td className="whitespace-nowrap">
                       {formatarDataHora(importacao.iniciadoEm)}
+                    </Td>
+                    {/*
+                      Quanto o arquivo levou para entrar. É a métrica que diz se
+                      a importação cabe no limite de execução do servidor — sem
+                      ela, o dia em que passar a não caber só se descobre pelo
+                      erro.
+                    */}
+                    <Td className="numerico whitespace-nowrap text-right">
+                      {formatarDuracao(importacao.iniciadoEm, importacao.finalizadoEm)}
                     </Td>
                     <Td className="max-w-64 truncate" title={importacao.nomeArquivo}>
                       {importacao.nomeArquivo}

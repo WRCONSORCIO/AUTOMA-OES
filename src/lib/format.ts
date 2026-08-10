@@ -71,6 +71,29 @@ export function formatarMesAno(chave: string): string {
   }).format(data);
 }
 
+/**
+ * Quanto tempo uma operação levou, do início ao fim.
+ *
+ * Nula enquanto a operação não terminou — o que é informação, não ausência
+ * dela: importação sem duração é importação que ainda está rodando ou que
+ * morreu no meio.
+ */
+export function formatarDuracao(
+  inicio: Date | string | null | undefined,
+  fim: Date | string | null | undefined,
+): string {
+  if (!inicio || !fim) return "—";
+  const ms = new Date(fim).getTime() - new Date(inicio).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${ms} ms`;
+
+  const segundos = ms / 1000;
+  if (segundos < 60) return `${segundos.toFixed(1)} s`;
+
+  const minutos = Math.floor(segundos / 60);
+  return `${minutos}min ${Math.round(segundos - minutos * 60)}s`;
+}
+
 export function formatarBytes(bytes: number | null | undefined): string {
   if (!bytes) return "—";
   const unidades = ["B", "KB", "MB", "GB", "TB"];
