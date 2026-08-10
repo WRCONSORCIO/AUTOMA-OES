@@ -155,6 +155,57 @@ export function resolverTabelaInterna(
   );
 }
 
+export interface ApuracaoDaVenda {
+  /** Soma dos percentuais de todas as parcelas da tabela. */
+  percentualTotal: number;
+  baseCalculo: number;
+  /** O que a venda vale por inteiro, quando todas as parcelas entrarem. */
+  previsto: number;
+  /** A parte já coberta pelas parcelas efetivamente recebidas. */
+  liberado: number;
+  /** Quantas parcelas da tabela têm percentual — informa a tela. */
+  parcelasComPercentual: number;
+}
+
+/**
+ * O que uma venda vale para um destino, do primeiro ao último recebimento.
+ *
+ * A comissão do consórcio não é um percentual único sobre o crédito: é um
+ * percentual DIFERENTE a cada parcela recebida, e há parcelas que não pagam
+ * nada. Somar as faixas dá o total da venda; somar só as faixas já recebidas
+ * dá o que pode ser pago hoje.
+ *
+ * É por isso que `parcelasRecebidas` entra aqui e não numa regra de liberação
+ * à parte: a liberação não é uma fração do total, é o subconjunto das parcelas
+ * que de fato entraram.
+ */
+export function apurarVendaPorParcelas(entrada: {
+  tabela: TabelaInterna | null;
+  valorCredito: number;
+  percentualFlex: number | null;
+  parcelasRecebidas: number;
+}): ApuracaoDaVenda {
+  const baseCalculo = calcularBaseComissao(entrada.valorCredito, entrada.percentualFlex);
+  const faixas = (entrada.tabela?.faixas ?? []).filter((faixa) => faixa.percentual > 0);
+
+  const percentualTotal = faixas.reduce((soma, faixa) => soma + faixa.percentual, 0);
+  const percentualLiberado = faixas
+    .filter((faixa) => faixa.parcela <= entrada.parcelasRecebidas)
+    .reduce((soma, faixa) => soma + faixa.percentual, 0);
+
+  return {
+    percentualTotal: arredondar4(percentualTotal),
+    baseCalculo,
+    previsto: arredondar2((baseCalculo * percentualTotal) / 100),
+    liberado: arredondar2((baseCalculo * percentualLiberado) / 100),
+    parcelasComPercentual: faixas.length,
+  };
+}
+
+function arredondar4(valor: number): number {
+  return Math.round(valor * 10000) / 10000;
+}
+
 export interface ResultadoComissaoInterna {
   aplicavel: boolean;
   baseCalculo: number;
