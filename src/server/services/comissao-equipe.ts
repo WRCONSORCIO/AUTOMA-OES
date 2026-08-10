@@ -460,6 +460,71 @@ export async function carregarTabelasEquipe(): Promise<TabelaVigente[]> {
   }));
 }
 
+export interface LacunaDeTabela {
+  categoria: CategoriaVendedor;
+  segmento: SegmentoVenda | null;
+  ano: number;
+  vendas: number;
+  credito: number;
+}
+
+/**
+ * Vendas com categoria resolvida que mesmo assim não têm tabela vigente.
+ *
+ * Sem isto, a falta de tabela é silenciosa: a venda tem categoria, tem
+ * vendedor, tem equipe — e simplesmente não aparece comissão nenhuma, sem erro
+ * e sem aviso. Quem cadastrou a tabela de uma categoria e esqueceu a de outra
+ * não tem como descobrir a não ser desconfiando do total.
+ *
+ * O agrupamento é por categoria, segmento e ano porque é exatamente a chave de
+ * uma tabela: quem lê o resultado sabe o que precisa cadastrar sem traduzir
+ * nada.
+ */
+export async function lacunasDeTabela(): Promise<LacunaDeTabela[]> {
+  const tabelas = await carregarTabelasEquipe();
+
+  const grupos = await prisma.$queryRaw<
+    {
+      categoria: CategoriaVendedor;
+      segmento: SegmentoVenda | null;
+      ano: number;
+      vendas: bigint;
+      credito: Prisma.Decimal;
+    }[]
+  >`
+    SELECT c."categoriaVenda" AS categoria,
+           c."segmentoVenda"  AS segmento,
+           EXTRACT(YEAR FROM c."dataVenda")::int AS ano,
+           COUNT(*) AS vendas,
+           COALESCE(SUM(c."valorCredito"), 0) AS credito
+    FROM "Cota" c
+    WHERE c."categoriaVenda" IS NOT NULL
+      AND c."dataVenda" IS NOT NULL
+    GROUP BY 1, 2, 3
+    ORDER BY 3 DESC, 1
+  `;
+
+  const lacunas: LacunaDeTabela[] = [];
+
+  for (const grupo of grupos) {
+    // Meio do ano como data de teste. Uma tabela que cobre só parte do ano
+    // aparece ou não conforme o mês; é aproximação assumida, e o preço de
+    // errar é mostrar uma linha a mais para conferir — nunca esconder uma.
+    const referencia = new Date(Date.UTC(grupo.ano, 6, 1));
+    if (resolverTabela(tabelas, grupo.categoria, grupo.segmento, referencia)) continue;
+
+    lacunas.push({
+      categoria: grupo.categoria,
+      segmento: grupo.segmento,
+      ano: grupo.ano,
+      vendas: Number(grupo.vendas),
+      credito: Number(grupo.credito),
+    });
+  }
+
+  return lacunas;
+}
+
 /**
  * A tabela vigente na data da venda, específica do segmento quando existir.
  * Mesma resolução da tabela da WR — a regra de vigência é uma só.

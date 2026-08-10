@@ -480,6 +480,16 @@ export async function criarVendedor(
 /**
  * Altera a categoria atual encerrando o período anterior e abrindo um novo.
  * O histórico é append-only: nenhuma linha é removida ou sobrescrita.
+ *
+ * Só mexe no CADASTRO. Aplicar a categoria às vendas é o passo seguinte, e
+ * fica com quem chama — `recalcularComissoes(usuario, { vendedorId })`. A
+ * separação existe porque este serviço é usado pela promoção, que altera dois
+ * documentos e reapura uma vez só no fim; embutir o reapuramento aqui faria a
+ * base ser varrida duas vezes para o mesmo resultado.
+ *
+ * **Toda ação de interface que chama isto tem de chamar o reapuramento.** Sem
+ * ele o cadastro fica certo e as vendas continuam "sem categoria de venda" —
+ * que é a condição para a comissão nem ser tentada.
  */
 export async function alterarCategoria(
   vendedorId: string,

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, SituacaoCota } from "@prisma/client";
 import { exigirPermissao } from "@/server/auth/session";
 import { escopoDoUsuario } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
@@ -43,6 +43,46 @@ const TOM_SITUACAO = {
   OUTRO: "neutro",
 } as const;
 
+const SITUACOES: { id: SituacaoCota; nome: string }[] = [
+  { id: "ATIVO", nome: "Ativa" },
+  { id: "CANCELADO", nome: "Cancelada" },
+  { id: "CONTEMPLADO", nome: "Contemplada" },
+  { id: "QUITADO", nome: "Quitada" },
+  { id: "EM_ATRASO", nome: "Em atraso" },
+  { id: "TRANSFERIDO", nome: "Transferida" },
+  { id: "DESISTENTE", nome: "Desistente" },
+  { id: "OUTRO", nome: "Outra" },
+];
+
+const ESTORNOS = [
+  { id: "QUALQUER", nome: "Com estorno (qualquer)" },
+  { id: "RECUPERACAO", nome: "Estorno por recuperação" },
+  { id: "CANCELAMENTO", nome: "Estorno por cancelamento" },
+  { id: "NENHUM", nome: "Sem estorno" },
+];
+
+/**
+ * Traduz a escolha do filtro de estorno em condição de consulta.
+ *
+ * "Sem estorno" não é o complemento de "com estorno" por acaso: é a lista que
+ * o financeiro usa para conferir se alguma venda cancelada deixou de gerar
+ * cobrança por falta de regra cadastrada.
+ */
+function filtroDeEstorno(escolha: string | undefined): Prisma.CotaWhereInput {
+  switch (escolha) {
+    case "QUALQUER":
+      return { estorno: { isNot: null } };
+    case "RECUPERACAO":
+      return { estorno: { is: { tipo: "RECUPERACAO" } } };
+    case "CANCELAMENTO":
+      return { estorno: { is: { tipo: "CANCELAMENTO" } } };
+    case "NENHUM":
+      return { estorno: { is: null } };
+    default:
+      return {};
+  }
+}
+
 export default async function PaginaClientes({
   searchParams,
 }: {
@@ -61,6 +101,12 @@ export default async function PaginaClientes({
   const digitos = digitosDaBusca(parametros.q);
 
   const where: Prisma.CotaWhereInput = {
+    ...(parametros.situacao ? { situacao: parametros.situacao as SituacaoCota } : {}),
+    // O filtro de estorno é sobre o estorno GRAVADO, não sobre um palpite do
+    // que se enquadraria. O que a tela mostra é o que o financeiro vai cobrar;
+    // uma lista de "prováveis" ao lado dos números reais seria pior que não ter
+    // filtro nenhum.
+    ...filtroDeEstorno(parametros.estorno),
     ...(de || ate
       ? { dataVenda: { ...(de ? { gte: de } : {}), ...(ate ? { lte: ate } : {}) } }
       : {}),
@@ -172,6 +218,8 @@ export default async function PaginaClientes({
           administradoras,
           gerencias,
           equipes,
+          situacoes: SITUACOES,
+          estornos: ESTORNOS,
           pessoas: pessoas.map((pessoa) => ({
             id: pessoa.id,
             // O número de documentos vai no rótulo porque muda o que a escolha

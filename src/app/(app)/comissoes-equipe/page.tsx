@@ -28,6 +28,7 @@ import { FiltrosPeriodo, lerParametrosFiltro } from "@/components/filtros-period
 import {
   carregarPainelComissaoEquipe,
   carregarTabelasEquipe,
+  lacunasDeTabela,
 } from "@/server/services/comissao-equipe";
 import { BotaoApurar } from "./apurar";
 
@@ -58,7 +59,7 @@ export default async function PaginaComissoesEquipe({
   const papel = texto(brutos, "papel");
   const categoria = texto(brutos, "categoria");
 
-  const [painel, tabelas, gerencias, equipes] = await Promise.all([
+  const [painel, tabelas, lacunas, gerencias, equipes] = await Promise.all([
     carregarPainelComissaoEquipe(
       {
         de: parseDataBr(parametros.de) ?? undefined,
@@ -71,6 +72,7 @@ export default async function PaginaComissoesEquipe({
       escopo,
     ),
     carregarTabelasEquipe(),
+    lacunasDeTabela(),
     prisma.gerencia.findMany({
       where: { status: "ATIVO" },
       select: { id: true, nome: true },
@@ -92,6 +94,28 @@ export default async function PaginaComissoesEquipe({
         descricao="O que a WR deve a vendedores, supervisão e gerência sobre cada venda. O previsto sai da tabela da categoria da venda; o liberado é a parte já coberta pelas parcelas recebidas da administradora."
         acoes={podeApurar ? <BotaoApurar /> : undefined}
       />
+
+      {tabelas.length > 0 && lacunas.length > 0 ? (
+        <Aviso tom="atencao">
+          <p>
+            Há vendas com categoria resolvida que continuam sem comissão porque{" "}
+            <strong>não existe tabela vigente</strong> para a combinação. O sistema não arbitra
+            percentual: sem tabela, não calcula. Cadastre as que faltam em{" "}
+            <strong>Tabelas e Flex</strong>.
+          </p>
+          <ul className="mt-2 list-disc space-y-0.5 pl-5">
+            {lacunas.map((lacuna) => (
+              <li key={`${lacuna.categoria}-${lacuna.segmento ?? "geral"}-${lacuna.ano}`}>
+                <strong>{lacuna.categoria}</strong>
+                {lacuna.segmento ? ` · ${lacuna.segmento}` : " · qualquer segmento"} · {lacuna.ano}
+                {" — "}
+                {formatarNumero(lacuna.vendas)} venda(s), {formatarMoeda(lacuna.credito)} de
+                crédito
+              </li>
+            ))}
+          </ul>
+        </Aviso>
+      ) : null}
 
       {tabelas.length === 0 ? (
         <Aviso tom="atencao">

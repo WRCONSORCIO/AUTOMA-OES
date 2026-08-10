@@ -27,6 +27,9 @@ export interface ConfiguracaoFiltros {
    * vendas dela sem avisar.
    */
   pessoas?: OpcaoFiltro[];
+  situacoes?: OpcaoFiltro[];
+  /** Filtro por estorno: qual dos dois tipos, ou nenhum. */
+  estornos?: OpcaoFiltro[];
   tipos?: OpcaoFiltro[];
 }
 
@@ -122,6 +125,32 @@ export function FiltrosPeriodo({
         </Campo>
       ) : null}
 
+      {opcoes.situacoes ? (
+        <Campo rotulo="Situação" className="w-44">
+          <Selecao name="situacao" defaultValue={parametros.situacao ?? ""}>
+            <option value="">Todas</option>
+            {opcoes.situacoes.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.nome}
+              </option>
+            ))}
+          </Selecao>
+        </Campo>
+      ) : null}
+
+      {opcoes.estornos ? (
+        <Campo rotulo="Estorno" className="w-56">
+          <Selecao name="estorno" defaultValue={parametros.estorno ?? ""}>
+            <option value="">Todas as vendas</option>
+            {opcoes.estornos.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.nome}
+              </option>
+            ))}
+          </Selecao>
+        </Campo>
+      ) : null}
+
       {opcoes.tipos ? (
         <Campo rotulo="Tipo" className="w-52">
           <Selecao name="tipo" defaultValue={parametros.tipo ?? ""}>
@@ -181,6 +210,8 @@ export function lerParametrosFiltro(
     equipe: primeiro("equipe"),
     vendedor: primeiro("vendedor"),
     pessoa: primeiro("pessoa"),
+    situacao: primeiro("situacao"),
+    estorno: primeiro("estorno"),
     tipo: primeiro("tipo"),
     q: primeiro("q"),
   };
