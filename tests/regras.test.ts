@@ -3,7 +3,6 @@ import {
   calcularBaseComissao,
   calcularComissaoWr,
   chaveDuplicidade,
-  deveGerarEstorno,
   encontrarRecuperacaoNaData,
   identificarTipoLancamento,
   montarIdentidadeCota,
@@ -90,54 +89,6 @@ describe("recuperação marca a venda pelo período", () => {
   it("venda fora do intervalo não é marcada", () => {
     expect(encontrarRecuperacaoNaData(periodos, dia("2026-06-30"))).toBeNull();
     expect(encontrarRecuperacaoNaData(periodos, dia("2027-01-01"))).toBeNull();
-  });
-});
-
-describe("estorno de venda em recuperação", () => {
-  it("cancelamento antes da 6ª parcela gera estorno", () => {
-    expect(
-      deveGerarEstorno({
-        emRecuperacao: true,
-        parcelasPagas: 5,
-        dataCancelamento: dia("2029-04-01"),
-      }),
-    ).toBe(true);
-  });
-
-  it("cancelamento na 6ª parcela não gera estorno", () => {
-    expect(
-      deveGerarEstorno({
-        emRecuperacao: true,
-        parcelasPagas: 6,
-        dataCancelamento: dia("2029-04-01"),
-      }),
-    ).toBe(false);
-  });
-
-  it("venda fora de recuperação nunca gera estorno", () => {
-    expect(
-      deveGerarEstorno({
-        emRecuperacao: false,
-        parcelasPagas: 1,
-        dataCancelamento: dia("2026-09-01"),
-      }),
-    ).toBe(false);
-  });
-
-  it("sem cancelamento não há estorno", () => {
-    expect(
-      deveGerarEstorno({ emRecuperacao: true, parcelasPagas: 0, dataCancelamento: null }),
-    ).toBe(false);
-  });
-
-  it("a regra vale mesmo anos depois da venda", () => {
-    expect(
-      deveGerarEstorno({
-        emRecuperacao: true,
-        parcelasPagas: 3,
-        dataCancelamento: dia("2031-12-20"),
-      }),
-    ).toBe(true);
   });
 });
 

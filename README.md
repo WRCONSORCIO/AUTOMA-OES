@@ -93,12 +93,25 @@ exporte `SEED_ADMIN_SENHA` (e opcionalmente `SEED_ADMIN_EMAIL`) antes de rodar.
    travados. Resolver ali registra a categoria (com a data de início já
    sugerida pela primeira venda do vendedor) e dispara o recálculo.
 
-   Para completar o cadastro em lote a partir da planilha de controle, salve-a
-   como CSV com as colunas `VENDEDOR;CATEGORIA;SUPERVISAO;GERENCIA` e rode:
+   Para completar o cadastro em lote, o script aceita dois formatos, escolhidos
+   pelo cabeçalho:
+
+   - **planilha de cadastro**, uma linha por vendedor —
+     `VENDEDOR;CATEGORIA;SUPERVISAO;GERENCIA`;
+   - **controle de clientes**, uma linha por cota, com o vendedor repetido —
+     `Cliente;Grupo;Cota;…;Vendedor;Equipe;Gerência;…`. Não traz categoria, então
+     preenche só equipe e gerência.
+
    ```bash
-   npx tsx scripts/importar-cadastro-vendedores.ts cadastro.csv          # simula
-   npx tsx scripts/importar-cadastro-vendedores.ts cadastro.csv --aplicar
+   npx tsx scripts/importar-cadastro-vendedores.ts controle.csv                      # simula
+   npx tsx scripts/importar-cadastro-vendedores.ts controle.csv --criar-estrutura --aplicar
    ```
+
+   `--criar-estrutura` cria as equipes e gerências citadas no arquivo que ainda
+   não existem, cada equipe sob a gerência que o próprio arquivo indica.
+
+   O casamento é por nome, e nome que bate com mais de um cadastro **não é
+   alterado** — atribuir vendas ao homônimo errado é pior que deixar pendente.
 4. **Tabelas e Flex.** Ajuste os percentuais por parcela de cada categoria.
 5. **Importações → Relatório de comissão (PDF).**
 6. **Comissões WR → Recalcular comissões**, sempre que o cadastro for

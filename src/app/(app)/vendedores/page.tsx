@@ -6,7 +6,7 @@ import { exigirPermissao } from "@/server/auth/session";
 import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatarDocumento } from "@/lib/normalize";
-import { formatarData, formatarNumero } from "@/lib/format";
+import { formatarData, formatarMoeda, formatarNumero } from "@/lib/format";
 import { inteiro, texto, type ParametrosBusca } from "@/lib/filtros";
 import {
   Aviso,
@@ -28,6 +28,8 @@ import {
 } from "@/components/ui";
 import { Paginacao } from "@/components/paginacao";
 import { NovoVendedor } from "./novo-vendedor";
+import { avaliarPessoas } from "@/modules/comercial/application/use-cases/aptos-promocao";
+import { categoriaDaPessoa } from "@/modules/comercial/domain/rules/promocao";
 
 export const metadata: Metadata = { title: "Vendedores" };
 
@@ -117,6 +119,14 @@ export default async function PaginaVendedores({
     }),
   ]);
 
+  // O consolidado vem só das pessoas desta página: a agregação é em SQL e não
+  // faz sentido varrer a base inteira para preencher 50 linhas.
+  const consolidados = await avaliarPessoas({
+    pessoaIds: pessoas.map((pessoa) => pessoa.id),
+    limite: POR_PAGINA,
+  });
+  const porPessoa = new Map(consolidados.map((item) => [item.pessoaId, item]));
+
   const linhas = pessoas.map((pessoa) => {
     // O documento com mais vendas responde pela pessoa nas colunas de resumo.
     const documentos = [...pessoa.documentos].sort(
@@ -134,7 +144,13 @@ export default async function PaginaVendedores({
       nome: pessoa.nome,
       href: `/vendedores/${principal?.id ?? ""}`,
       documentos,
-      categoriaAtual: principal?.categoriaAtual ?? "INICIANTE",
+      // A categoria da pessoa é a MAIS ALTA entre os documentos, não a do
+      // documento com mais vendas. Quem tem o CPF antigo cheio de vendas como
+      // iniciante e um CNPJ novo como veterano já é veterano — usar o documento
+      // mais movimentado o mostraria como iniciante para sempre.
+      categoriaAtual:
+        categoriaDaPessoa(documentos.map((item) => item.categoriaAtual)) ?? "INICIANTE",
+      consolidado: porPessoa.get(pessoa.id) ?? null,
       equipeNome: documentos.find((item) => item.equipe)?.equipe?.nome ?? null,
       gerenciaNome: documentos.find((item) => item.gerencia)?.gerencia?.nome ?? null,
       entradaWr: entradas[0] ?? null,
@@ -216,6 +232,7 @@ export default async function PaginaVendedores({
                 <Th>Vendedor</Th>
                 <Th>CPF/CNPJ</Th>
                 <Th>Categoria atual</Th>
+                <Th className="text-right">Vendido (carteira)</Th>
                 <Th>Equipe</Th>
                 <Th>Gerência</Th>
                 <Th>Entrada WR</Th>
@@ -225,7 +242,7 @@ export default async function PaginaVendedores({
             </Cabecalho>
             <tbody>
               {linhas.length === 0 ? (
-                <TabelaVazia colunas={8} mensagem="Nenhum vendedor encontrado." />
+                <TabelaVazia colunas={9} mensagem="Nenhum vendedor encontrado." />
               ) : (
                 linhas.map((linha) => (
                   <Tr key={linha.id}>
@@ -245,9 +262,36 @@ export default async function PaginaVendedores({
                       </div>
                     </Td>
                     <Td>
-                      <Badge tom={TOM_CATEGORIA[linha.categoriaAtual]}>
-                        {linha.categoriaAtual}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge tom={TOM_CATEGORIA[linha.categoriaAtual]}>
+                          {linha.categoriaAtual}
+                        </Badge>
+                        {linha.consolidado?.aptidao.apto ? (
+                          <Badge tom="bom">
+                            apto a {linha.consolidado.aptidao.categoriaAlvo}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </Td>
+                    <Td className="numerico text-right whitespace-nowrap">
+                      {linha.consolidado ? (
+                        <>
+                          <div>{formatarMoeda(linha.consolidado.volumeVendido)}</div>
+                          {linha.consolidado.aptidao.volumeMinimo !== null &&
+                          !linha.consolidado.aptidao.apto ? (
+                            <div className="text-xs text-[var(--color-texto-3)]">
+                              faltam {formatarMoeda(linha.consolidado.aptidao.faltam)}
+                            </div>
+                          ) : null}
+                          {linha.consolidado.volumeEstornoTotal > 0 ? (
+                            <div className="text-xs text-[var(--color-texto-3)]">
+                              −{formatarMoeda(linha.consolidado.volumeEstornoTotal)} estorno total
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        "—"
+                      )}
                     </Td>
                     <Td>{linha.equipeNome ?? "—"}</Td>
                     <Td>{linha.gerenciaNome ?? "—"}</Td>

@@ -9,6 +9,11 @@ import {
 } from "@/server/domain/vinculo-nomes";
 import { registrarAuditoria } from "./auditoria";
 import type { ContextoUsuario } from "./vendedores";
+import {
+  podeAcrescentarDocumento,
+  tipoDoDocumento,
+  type DocumentoDaPessoa as DocumentoParaLimite,
+} from "@/modules/comercial/domain/rules/documentos";
 
 type Cliente = Prisma.TransactionClient | PrismaClient;
 
@@ -17,8 +22,9 @@ type Cliente = Prisma.TransactionClient | PrismaClient;
  *
  * O vendedor entra vendendo no CPF e passa a operar por CNPJ ao mudar de
  * categoria, então a mesma pessoa acumula vários documentos. Categoria e
- * recuperação pertencem à pessoa; o documento continua sendo a unidade que a
- * administradora paga.
+ * recuperação pertencem ao DOCUMENTO — o CPF pode ser iniciante enquanto o CNPJ
+ * já é veterano. A pessoa é a unidade de identidade e de consolidação; o
+ * documento é a unidade de operação, cálculo e pagamento.
  *
  * Nada aqui altera venda já gravada: categoria e recuperação da venda são
  * fotografias tiradas na importação e permanecem intocadas.
@@ -104,10 +110,10 @@ export async function vincularAPessoaExistente(
  */
 export async function sincronizarCategoriaAtual(
   db: Cliente,
-  pessoaId: string,
+  vendedorId: string,
 ): Promise<CategoriaVendedor | null> {
   const historico = await db.vendedorCategoriaHistorico.findMany({
-    where: { pessoaId },
+    where: { vendedorId },
     select: { categoria: true, vigenteDe: true, vigenteAte: true },
     orderBy: { vigenteDe: "asc" },
   });
@@ -115,7 +121,9 @@ export async function sincronizarCategoriaAtual(
   const categoria = resolverCategoriaNaData(historico, new Date());
   if (!categoria) return null;
 
-  await db.vendedor.updateMany({ where: { pessoaId }, data: { categoriaAtual: categoria } });
+  // Só o documento. Propagar para os irmãos apagaria a diferença entre o CPF
+  // iniciante e o CNPJ veterano, que é justamente o que a trilha cria.
+  await db.vendedor.update({ where: { id: vendedorId }, data: { categoriaAtual: categoria } });
   return categoria;
 }
 
@@ -316,6 +324,41 @@ export async function vincularDocumentos(
     ),
   ];
 
+  // Uma pessoa opera por no máximo 1 CPF e 2 CNPJs — é a trilha inteira.
+  // Estourar o teto quase sempre significa que dois homônimos foram tomados
+  // por uma pessoa só, e o estrago disso é somar a carteira de duas pessoas
+  // diferentes num consolidado que decide promoção.
+  const jaNaPessoa = await prisma.vendedor.findMany({
+    where: { pessoaId: destinoId, id: { notIn: entrada.vendedorIds } },
+    select: { id: true, cpfCnpj: true, tipoDocumento: true },
+  });
+
+  const acumulados: DocumentoParaLimite[] = jaNaPessoa.map((doc) => ({
+    id: doc.id,
+    cpfCnpj: doc.cpfCnpj,
+    tipo: doc.tipoDocumento,
+    categoriaAtual: null,
+    encerradoParaVendaEm: null,
+  }));
+
+  for (const vendedor of vendedores) {
+    const tipo = tipoDoDocumento(vendedor.cpfCnpj);
+    if (!tipo) {
+      throw new Error(
+        `Documento ${vendedor.cpfCnpj} não é CPF nem CNPJ — verifique o cadastro antes de vincular.`,
+      );
+    }
+    const permitido = podeAcrescentarDocumento(acumulados, tipo);
+    if (!permitido.ok) throw new Error(permitido.erro.mensagem);
+    acumulados.push({
+      id: vendedor.id,
+      cpfCnpj: vendedor.cpfCnpj,
+      tipo,
+      categoriaAtual: null,
+      encerradoParaVendaEm: null,
+    });
+  }
+
   await prisma.$transaction(async (tx) => {
     for (const vendedor of vendedores) {
       if (vendedor.pessoaId === destinoId) continue;
@@ -351,10 +394,14 @@ export async function vincularDocumentos(
       });
     }
 
-    // Os documentos chegam cada um com a categoria que tinham quando eram
-    // pessoas separadas. Depois do vínculo existe uma categoria só, a que o
-    // histórico da pessoa dá para hoje, e ela vale para todos eles.
-    await sincronizarCategoriaAtual(tx, destinoId);
+    // Cada documento MANTÉM a sua categoria. Vincular à mesma pessoa não
+    // unifica categoria: é exatamente o caso do CPF iniciante e do CNPJ
+    // veterano, que só existem como documentos da mesma pessoa. Antes isso
+    // nivelava todo mundo pela categoria da pessoa, o que agora apagaria a
+    // trilha de progressão.
+    for (const vendedor of vendedores) {
+      await sincronizarCategoriaAtual(tx, vendedor.id);
+    }
   });
 
   await registrarAuditoria({
@@ -452,6 +499,12 @@ export interface DocumentoDaPessoa {
   cpfCnpj: string;
   tipo: "CPF" | "CNPJ" | "OUTRO";
   situacao: string;
+  /** Categoria PRÓPRIA do documento. O CPF pode ser iniciante e o CNPJ veterano. */
+  categoriaAtual: CategoriaVendedor;
+  equipeNome: string | null;
+  gerenciaNome: string | null;
+  /** Documento que parou de vender por promoção. */
+  encerradoParaVendaEm: Date | null;
   cotas: number;
   credito: number;
   comissaoWr: number;
@@ -474,7 +527,16 @@ export async function carregarFichaPessoa(pessoaId: string): Promise<FichaPessoa
       id: true,
       nome: true,
       documentos: {
-        select: { id: true, nome: true, cpfCnpj: true, situacao: true },
+        select: {
+          id: true,
+          nome: true,
+          cpfCnpj: true,
+          situacao: true,
+          categoriaAtual: true,
+          encerradoParaVendaEm: true,
+          equipe: { select: { nome: true } },
+          gerencia: { select: { nome: true } },
+        },
         orderBy: { criadoEm: "asc" },
       },
     },
@@ -532,6 +594,10 @@ export async function carregarFichaPessoa(pessoaId: string): Promise<FichaPessoa
       cpfCnpj: documento.cpfCnpj,
       tipo: tipoDocumento(documento.cpfCnpj),
       situacao: documento.situacao,
+      categoriaAtual: documento.categoriaAtual,
+      equipeNome: documento.equipe?.nome ?? null,
+      gerenciaNome: documento.gerencia?.nome ?? null,
+      encerradoParaVendaEm: documento.encerradoParaVendaEm,
       cotas: cotas?.cotas ?? 0,
       credito: arredondar(cotas?.credito ?? 0),
       comissaoWr: arredondar(comissaoPorDocumento.get(documento.id) ?? 0),

@@ -8,6 +8,12 @@ import { registrarAuditoria } from "@/server/services/auditoria";
 import type { ContextoUsuario } from "@/server/services/vendedores";
 import { conferirFormulario, FORMULARIOS } from "./formularios";
 import { lerPdfBonus, type RegistroBonusPdf } from "./pdf-bonus";
+import {
+  evento,
+  type MetadadosEvento,
+} from "@/shared/events/catalogo";
+import { publicar } from "@/shared/events/outbox-prisma";
+import { drenarEventos } from "@/shared/events/handlers";
 
 const TAMANHO_LOTE = 200;
 
@@ -99,6 +105,12 @@ export async function importarBonusPdf(
             hashArquivo,
             periodoInicio: leitura.periodoInicio,
             periodoFim: leitura.periodoFim,
+            metadados: {
+              usuarioId: entrada.usuario.id,
+              usuarioNome: entrada.usuario.nome,
+              importacaoId: importacao.id,
+              correlacaoId: importacao.id,
+            },
           });
 
           if (gravado.duplicado) {
@@ -127,6 +139,8 @@ export async function importarBonusPdf(
 
     const status = contadores.erros > 0 ? "CONCLUIDA_COM_ERROS" : "CONCLUIDA";
 
+    const eventos = await drenarEventos();
+
     await prisma.importacao.update({
       where: { id: importacao.id },
       data: {
@@ -137,6 +151,11 @@ export async function importarBonusPdf(
         qtdDuplicados: contadores.duplicados,
         qtdErros: contadores.erros,
         resumo: {
+          eventos: {
+            processados: eventos.eventos,
+            entregas: eventos.entregasOk,
+            falhas: eventos.eventosComFalha,
+          },
           paginas: leitura.paginas,
           prestadora: leitura.prestadora,
           periodo: {
@@ -229,6 +248,7 @@ async function gravarBonus(entrada: {
   hashArquivo: string;
   periodoInicio: Date | null;
   periodoFim: Date | null;
+  metadados: MetadadosEvento;
 }): Promise<{ duplicado: boolean }> {
   const { registro, cota } = entrada;
 
@@ -249,7 +269,8 @@ async function gravarBonus(entrada: {
   });
   if (existente) return { duplicado: true };
 
-  await prisma.bonusIncentivo.create({
+  await prisma.$transaction(async (tx) => {
+    const gravado = await tx.bonusIncentivo.create({
     data: {
       importacaoId: entrada.importacaoId,
       administradoraId: entrada.administradoraId,
@@ -280,6 +301,24 @@ async function gravarBonus(entrada: {
       hashRegistro,
       paginaPdf: registro.pagina,
     },
+      select: { id: true },
+    });
+
+    // O bônus não paga ninguém: serve para descobrir de qual gerência veio o
+    // valor. O evento é o que permite ao rateio reagir sem varrer a base.
+    await publicar(tx, [
+      evento(
+        "apuracao.bonus.rateado",
+        "BonusIncentivo",
+        gravado.id,
+        {
+          bonusId: gravado.id,
+          gerenciaId: cota?.gerenciaId ?? null,
+          valorIncentivo: registro.valorIncentivo,
+        },
+        entrada.metadados,
+      ),
+    ]);
   });
 
   return { duplicado: false };

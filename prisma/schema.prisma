@@ -35,6 +35,16 @@ enum CategoriaVendedor {
   EXPERT
 }
 
+/// Natureza do documento pelo qual a pessoa opera.
+///
+/// A pessoa entra vendendo no CPF e, ao ser promovida, passa a operar por CNPJ.
+/// O limite é 1 CPF + 2 CNPJs, porque é exatamente a trilha iniciante →
+/// veterano → expert.
+enum TipoDocumento {
+  CPF
+  CNPJ
+}
+
 enum SituacaoVendedor {
   ATIVO
   INATIVO
@@ -151,6 +161,23 @@ enum CondicaoComissao {
   EQUIPE_HABILITADA
 }
 
+/// Tipo de estorno. O briefing define dois, e o percentual de cada um é
+/// configurável — nunca constante no código.
+enum TipoEstorno {
+  /// Cota cancelada fora de período de recuperação.
+  CANCELAMENTO
+  /// Cota marcada permanentemente como vendida durante recuperação.
+  RECUPERACAO
+}
+
+/// Ciclo de vida de um evento de domínio no outbox.
+enum StatusEvento {
+  PENDENTE
+  PROCESSANDO
+  PROCESSADO
+  FALHA
+}
+
 enum TipoBackup {
   AUTOMATICO
   MANUAL
@@ -193,6 +220,8 @@ model Usuario {
   overridesHistorico    CotaVendedorOverrideHistorico[]
   alocacoesRegistradas  VendedorAlocacaoHistorico[]
   vinculosRegistrados   PessoaVinculoHistorico[]
+  regrasEstorno         RegraEstorno[]
+  metasPromocao         MetaPromocao[]
 
   @@index([perfil, ativo])
   @@index([gerenciaId])
@@ -301,6 +330,22 @@ model Vendedor {
   // Normalizado (somente dígitos) para casar com a base da administradora.
   cpfCnpj          String            @unique
   cpfCnpjFormatado String?
+  /// Derivado do documento: 11 dígitos é CPF, 14 é CNPJ.
+  tipoDocumento    TipoDocumento     @default(CPF)
+  /// Data a partir da qual o documento não recebe VENDA NOVA.
+  ///
+  /// Não é desativação, e a diferença é dinheiro: o documento **continua
+  /// recebendo** comissão sobre as vendas que já fez, para sempre. Só para de
+  /// entrar venda nova nele.
+  ///
+  /// Preenchido apenas no degrau iniciante → veterano, em que a pessoa passa a
+  /// operar pelo CNPJ e para de vender no CPF, por regra. No degrau veterano →
+  /// expert **nada é preenchido**: o CNPJ veterano segue vendendo, e o CNPJ de
+  /// expert nasce como identidade de supervisão, que não vende.
+  ///
+  /// Venda que chegar depois desta data é anomalia — vira alerta, nunca
+  /// bloqueio: a administradora é a fonte da verdade e o fato aconteceu.
+  encerradoParaVendaEm DateTime?     @db.Date
   equipeId         String?
   gerenciaId       String?
   categoriaAtual   CategoriaVendedor @default(INICIANTE)
@@ -331,6 +376,7 @@ model Vendedor {
   bonus                BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
   comissoes           ComissaoRegistro[]
+  regrasEstorno       RegraEstorno[]
 
   @@index([nome])
   @@index([situacao])
@@ -344,9 +390,11 @@ model Vendedor {
 /// nunca pela categoria atual do vendedor.
 model VendedorCategoriaHistorico {
   id         String            @id @default(cuid())
-  /// Dono do período. A categoria vale para todos os documentos da pessoa.
+  /// Pessoa a que o documento pertence. Mantido para rastreio e para permitir
+  /// reverter a decisão de resolver por documento sem perder dado.
   pessoaId   String?
-  /// Documento a partir do qual o registro foi feito, mantido por rastreio.
+  /// **Dono do período.** A categoria é do DOCUMENTO: o CPF pode ser iniciante
+  /// enquanto o CNPJ já é veterano, porque é assim que a promoção funciona.
   vendedorId String?
   categoria  CategoriaVendedor
   vigenteDe  DateTime          @db.Date
@@ -388,9 +436,9 @@ model VendedorAlocacaoHistorico {
 /// permanentemente na cota — encerrar a recuperação não desmarca nada.
 model VendedorRecuperacao {
   id          String    @id @default(cuid())
-  /// Dono do período. Vale para todos os documentos da pessoa.
+  /// Pessoa a que o documento pertence. Mantido para rastreio.
   pessoaId    String?
-  /// Documento a partir do qual o registro foi feito, mantido por rastreio.
+  /// **Dono do período.** A recuperação é do DOCUMENTO, como a categoria.
   vendedorId  String?
   dataInicio  DateTime  @db.Date
   dataFim     DateTime  @db.Date
@@ -614,9 +662,27 @@ model Estorno {
   valorReferencia             Decimal? @db.Decimal(18, 2)
   criadoEm                    DateTime @default(now())
 
-  cota Cota @relation(fields: [cotaId], references: [id])
+  /// Qual dos dois tipos gerou este estorno.
+  tipo TipoEstorno @default(RECUPERACAO)
+  /// Regra vigente aplicada e o percentual dela, congelados no momento da
+  /// apuração. Alterar a regra depois não reescreve este valor.
+  regraEstornoId     String?
+  percentualAplicado Decimal? @db.Decimal(9, 4)
+  parcelaLimite      Int?
+  /// valorReferencia × percentualAplicado.
+  valorEstorno       Decimal? @db.Decimal(18, 2)
+
+  /// Importação que trouxe o cancelamento. Responde "esta importação gerou
+  /// quais estornos" sem precisar adivinhar por janela de tempo.
+  importacaoId String?
+
+  cota       Cota          @relation(fields: [cotaId], references: [id])
+  regra      RegraEstorno? @relation(fields: [regraEstornoId], references: [id])
+  importacao Importacao?   @relation(fields: [importacaoId], references: [id])
 
   @@index([dataCancelamento])
+  @@index([tipo, dataCancelamento])
+  @@index([importacaoId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,6 +1094,7 @@ model Importacao {
   erros     ImportacaoErro[]
   versoes   CotaVersao[]
   comissoes ComissaoRegistro[]
+  estornos  Estorno[]
 
   @@index([tipo, iniciadoEm])
   @@index([status])
@@ -1087,10 +1154,154 @@ model Backup {
   @@index([status])
 }
 
+/// Meta de volume que promove a pessoa ao próximo degrau da trilha.
+///
+/// Parametrizada com vigência, como toda regra: mudar a meta hoje não pode
+/// reclassificar quem já foi promovido sob a meta antiga.
+///
+/// O volume conta a **carteira completa** — todas as vendas da pessoa, somando
+/// os documentos. Foi assim que a WR definiu.
+model MetaPromocao {
+  id String @id @default(cuid())
+
+  /// Categoria alcançada ao cruzar o limite.
+  categoriaAlvo CategoriaVendedor
+  /// Volume vendido acumulado que dispara a promoção.
+  volumeMinimo  Decimal           @db.Decimal(18, 2)
+  /// Documento que o degrau exige abrir.
+  abreDocumento TipoDocumento     @default(CNPJ)
+
+  vigenteDe  DateTime  @db.Date
+  vigenteAte DateTime? @db.Date
+
+  observacoes String?
+  usuarioId   String?
+  criadoEm    DateTime @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([categoriaAlvo, vigenteDe])
+}
+
 model ConfiguracaoSistema {
   id           String   @id @default(cuid())
   chave        String   @unique
   valor        Json
   descricao    String?
   atualizadoEm DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Eventos de domínio — outbox transacional
+//
+// O evento é gravado na MESMA transação do fato que o originou. Ou os dois
+// existem, ou nenhum existe: é o que impede o cenário em que a venda é gravada
+// e a comissão nunca é calculada porque o processo caiu no meio.
+//
+// O despachante lê o outbox depois do commit, entrega a cada handler inscrito e
+// registra a entrega em `EventoEntrega`. Reprocessar é seguro por construção.
+// ---------------------------------------------------------------------------
+
+model EventoDominio {
+  id String @id @default(cuid())
+
+  /// Nome no padrão `contexto.agregado.fato`, sempre no passado.
+  /// Ex.: `carteira.cota.cancelada`.
+  tipo String
+  /// Versão do formato do payload. Permite evoluir o contrato sem reescrever
+  /// eventos antigos — handler antigo continua lendo o que entende.
+  versao Int @default(1)
+
+  agregado   String
+  agregadoId String
+
+  payload Json
+  /// Rastro: usuário, IP, importação de origem, id de correlação.
+  metadados Json?
+
+  /// Quando o FATO aconteceu (não quando a linha foi gravada).
+  ocorridoEm DateTime @default(now())
+
+  status             StatusEvento @default(PENDENTE)
+  tentativas         Int          @default(0)
+  proximaTentativaEm DateTime?
+  ultimoErro         String?
+  processadoEm       DateTime?
+
+  entregas EventoEntrega[]
+
+  // Fila do despachante: só o que está pendente e já venceu o backoff.
+  @@index([status, proximaTentativaEm])
+  @@index([tipo, ocorridoEm])
+  @@index([agregado, agregadoId])
+  @@index([ocorridoEm])
+}
+
+/// Entrega de um evento a um handler específico.
+///
+/// A unicidade `(eventoId, handler)` é a idempotência do sistema: o mesmo
+/// evento nunca é aplicado duas vezes pelo mesmo handler, mesmo com retry,
+/// reimportação ou processo duplicado.
+model EventoEntrega {
+  id       String @id @default(cuid())
+  eventoId String
+  handler  String
+
+  status      StatusEvento @default(PENDENTE)
+  tentativas  Int          @default(0)
+  erro        String?
+  duracaoMs   Int?
+  criadoEm    DateTime     @default(now())
+  concluidoEm DateTime?
+
+  evento EventoDominio @relation(fields: [eventoId], references: [id], onDelete: Cascade)
+
+  @@unique([eventoId, handler])
+  @@index([status, handler])
+}
+
+// ---------------------------------------------------------------------------
+// Regras de estorno — parametrizadas
+//
+// Substitui a constante `PARCELA_LIMITE_ESTORNO = 6` que vivia no código.
+// Cada vendedor pode ter percentual e limite próprios, com vigência: alterar a
+// regra hoje não reescreve o estorno já apurado ontem.
+// ---------------------------------------------------------------------------
+
+model RegraEstorno {
+  id String @id @default(cuid())
+
+  /// Documento dono da regra. Nulo = regra padrão da WR, usada quando o
+  /// documento não tem regra própria vigente.
+  vendedorId String?
+  tipo       TipoEstorno
+
+  /// Categorias da VENDA a que a regra se aplica. Vazio = todas.
+  ///
+  /// É lista, e não um valor só, porque as duas situações de estorno valem para
+  /// veterano E expert — quem recebe direto da administradora. Guardar isso em
+  /// duas linhas separadas convidaria ao pior erro possível: alterar o
+  /// percentual de uma e esquecer a outra, deixando o sistema cobrando valores
+  /// diferentes para a mesma regra de negócio.
+  categoriasVenda CategoriaVendedor[]
+
+  /// Cancelamento com parcelas pagas ABAIXO deste número gera estorno.
+  /// Zero desliga o estorno para o caso.
+  parcelaLimite Int
+  /// Percentual do valor de referência a estornar.
+  percentual    Decimal @db.Decimal(9, 4)
+
+  vigenteDe  DateTime  @db.Date
+  vigenteAte DateTime? @db.Date
+
+  observacoes String?
+  usuarioId   String?
+  criadoEm    DateTime @default(now())
+
+  vendedor Vendedor? @relation(fields: [vendedorId], references: [id])
+  usuario  Usuario?  @relation(fields: [usuarioId], references: [id])
+  estornos Estorno[]
+
+  @@index([vendedorId, tipo, vigenteDe])
+  @@index([tipo, vigenteDe])
 }

@@ -29,12 +29,18 @@ import {
 import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
 import { BotaoSemear, EditorTabela } from "./formularios";
 import { BotaoAlternarFlex, FormularioFlex } from "../tabelas/formularios";
+import { listarRegrasEstorno } from "@/modules/apuracao/application/use-cases/configurar-regra-estorno";
+import { LinhaRegraEstorno, NovaRegraEstorno } from "./estorno-formularios";
+import { listarMetas } from "@/modules/comercial/application/use-cases/configurar-metas";
+import { LinhaMeta, NovaMeta } from "./metas-formularios";
 
 export const metadata: Metadata = { title: "Configurações" };
 
 const ABAS: Aba[] = [
   { chave: "comissoes", rotulo: "Comissões" },
   { chave: "flex", rotulo: "Flex" },
+  { chave: "estornos", rotulo: "Estornos" },
+  { chave: "metas", rotulo: "Metas de promoção" },
 ];
 
 /** A ordem em que as tabelas aparecem: quem a WR paga primeiro. */
@@ -59,10 +65,31 @@ export default async function PaginaConfiguracoes({
   const brutos = await searchParams;
   const aba = lerAba(brutos, ABAS);
 
-  const [tabelas, modalidades] = await Promise.all([
+  const [tabelas, modalidades, regrasEstorno, metas, vendedores] = await Promise.all([
     carregarTabelasInternas(),
     prisma.modalidadeFlex.findMany({ orderBy: { percentual: "asc" } }),
+    listarRegrasEstorno(),
+    listarMetas(),
+    prisma.vendedor.findMany({
+      where: { situacao: "ATIVO" },
+      select: { id: true, nome: true },
+      orderBy: { nome: "asc" },
+    }),
   ]);
+
+  const dia = (data: Date | null) => (data ? data.toISOString().slice(0, 10) : null);
+  const metasView = metas.map((meta) => ({
+    ...meta,
+    vigenteDe: dia(meta.vigenteDe) as string,
+    vigenteAte: dia(meta.vigenteAte),
+  }));
+
+  const regrasView = regrasEstorno.map((regra) => ({
+    ...regra,
+    categoriasVenda: regra.categoriasVenda as string[],
+    vigenteDe: dia(regra.vigenteDe) as string,
+    vigenteAte: dia(regra.vigenteAte),
+  }));
 
   const porChave = new Map(
     tabelas.map((tabela) => [`${tabela.destino}|${tabela.segmento}`, tabela]),
@@ -239,6 +266,99 @@ export default async function PaginaConfiguracoes({
                   )}
                 </tbody>
               </Tabela>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+
+      {aba === "estornos" ? (
+        <>
+          <Aviso tom="marca">
+            Só existem <strong>duas</strong> situações de estorno: venda feita em
+            período de recuperação, e cancelamento com uma parcela paga — este
+            último apenas nas vendas do documento veterano. Fora disso, nada é
+            cobrado do vendedor.
+          </Aviso>
+
+          <Aviso tom="atencao">
+            Alterar uma regra <strong>não reescreve o passado</strong>: o período
+            atual é encerrado e um novo é aberto a partir da data informada. Um
+            cancelamento é sempre julgado pela regra que valia no dia em que
+            aconteceu.
+          </Aviso>
+
+          {podeEditar ? (
+            <Card>
+              <CardContent className="py-4">
+                <NovaRegraEstorno vendedores={vendedores} />
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Regras cadastradas</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {regrasView.length === 0 ? (
+                <p className="text-sm text-[var(--color-texto-2)]">
+                  Nenhuma regra cadastrada. Sem regra vigente, nenhum cancelamento
+                  gera estorno.
+                </p>
+              ) : (
+                regrasView.map((regra) => (
+                  <LinhaRegraEstorno
+                    key={regra.id}
+                    regra={regra}
+                    vendedores={vendedores}
+                    podeEditar={podeEditar}
+                  />
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+
+      {aba === "metas" ? (
+        <>
+          <Aviso tom="marca">
+            A pessoa progride ao atingir volume vendido, e cada degrau abre um CNPJ novo:
+            o <strong>iniciante</strong> vira <strong>veterano</strong> e passa a operar pelo
+            CNPJ; o veterano vira <strong>expert</strong>, que não vende — é a identidade pela
+            qual ele recebe supervisão. O volume conta a <strong>carteira completa</strong>,
+            somando todos os documentos da pessoa.
+          </Aviso>
+
+          <Aviso tom="atencao">
+            O sistema <strong>não promove sozinho</strong>. A meta define quem aparece como apto;
+            quem decide é o RH, na ficha da pessoa. Alterar uma meta não reclassifica ninguém que
+            já foi promovido.
+          </Aviso>
+
+          {podeEditar ? (
+            <Card>
+              <CardContent className="py-4">
+                <NovaMeta />
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Metas cadastradas</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {metasView.length === 0 ? (
+                <p className="text-sm text-[var(--color-texto-2)]">
+                  Nenhuma meta cadastrada. Sem meta vigente, ninguém aparece como apto para
+                  promoção.
+                </p>
+              ) : (
+                metasView.map((meta) => (
+                  <LinhaMeta key={meta.id} meta={meta} podeEditar={podeEditar} />
+                ))
+              )}
             </CardContent>
           </Card>
         </>

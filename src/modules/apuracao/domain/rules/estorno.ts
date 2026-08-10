@@ -1,0 +1,181 @@
+import { arredondar, percentual } from "@/shared/domain/dinheiro";
+import { resolverVigentePorPrecedencia } from "@/shared/domain/periodo";
+import type { ComVigencia } from "@/shared/domain/periodo";
+
+/**
+ * Regra de estorno — parametrizada.
+ *
+ * Substitui a constante `PARCELA_LIMITE_ESTORNO = 6`, que era regra de negócio
+ * escrita em código: mudar o limite exigia deploy, e mudá-lo reescrevia
+ * retroativamente o julgamento de cancelamentos antigos.
+ *
+ * O briefing define **dois tipos** de estorno e exige percentual configurável
+ * por vendedor. Aqui a regra vem de fora, resolvida pela data do fato.
+ *
+ * Módulo puro: nenhum acesso a banco. Toda a decisão é testável isoladamente.
+ */
+
+export type TipoEstorno = "CANCELAMENTO" | "RECUPERACAO";
+export type CategoriaVenda = "INICIANTE" | "VETERANO" | "EXPERT";
+
+export interface RegraEstornoVigente extends ComVigencia {
+  readonly id: string;
+  /** Nulo = regra padrão da WR, aplicada a quem não tem regra própria. */
+  readonly vendedorId: string | null;
+  readonly tipo: TipoEstorno;
+  /**
+   * Categorias da venda a que a regra se aplica. Vazio = todas.
+   *
+   * As duas situações de estorno valem para veterano e expert — as categorias
+   * que recebem direto da administradora. Venda de iniciante é paga pela WR e
+   * não é cobrada de volta.
+   */
+  readonly categoriasVenda: readonly CategoriaVenda[];
+  /**
+   * Cancelamento com parcelas pagas ABAIXO deste número gera estorno.
+   * Zero desliga o estorno para o caso — é como se configura "este vendedor
+   * não estorna" sem precisar de uma flag separada.
+   */
+  readonly parcelaLimite: number;
+  /** Percentual do valor de referência a estornar, em pontos (100 = integral). */
+  readonly percentual: number;
+}
+
+export interface FatoCancelamento {
+  readonly vendedorId: string | null;
+  /** Marcação permanente de venda realizada durante recuperação. */
+  readonly emRecuperacao: boolean;
+  readonly parcelasPagas: number;
+  readonly dataCancelamento: Date | null;
+  /** Comissão já paga sobre a venda — é o que se devolve. */
+  readonly valorReferencia: number | null;
+  /** Categoria congelada na venda. Decide quais regras se aplicam. */
+  readonly categoriaVenda: CategoriaVenda | null;
+}
+
+export type DecisaoEstorno =
+  | { readonly gera: false; readonly motivo: string }
+  | {
+      readonly gera: true;
+      readonly tipo: TipoEstorno;
+      readonly regraId: string;
+      readonly parcelaLimite: number;
+      readonly percentualAplicado: number;
+      readonly valorEstorno: number;
+      readonly motivo: string;
+    };
+
+/**
+ * Qual dos dois tipos se aplica.
+ *
+ * A marcação de recuperação é permanente e vale sobre a data da VENDA, não a do
+ * cancelamento — uma venda feita em recuperação continua sendo de recuperação
+ * mesmo que cancele anos depois, já com o período encerrado.
+ */
+export function tipoDoEstorno(fato: FatoCancelamento): TipoEstorno {
+  return fato.emRecuperacao ? "RECUPERACAO" : "CANCELAMENTO";
+}
+
+/**
+ * Escolhe a regra que vale para o vendedor na data do cancelamento.
+ *
+ * A precedência tem duas dimensões — o vendedor e a categoria da venda — e o
+ * mais específico vence em ambas, nesta ordem:
+ *
+ *   1. regra do vendedor, para aquela categoria
+ *   2. regra do vendedor, para qualquer categoria
+ *   3. regra padrão, para aquela categoria
+ *   4. regra padrão, para qualquer categoria
+ *
+ * O vendedor pesa mais que a categoria porque é a exceção negociada
+ * individualmente: quem cadastrou uma regra para uma pessoa específica quis
+ * justamente que ela escapasse do padrão.
+ *
+ * Entre duas do mesmo nível, vence a de vigência mais recente. Nunca há
+ * fallback para constante: sem regra cadastrada, não há estorno — e o motivo
+ * aparece na decisão, para o financeiro saber que falta configurar em vez de
+ * achar que a venda simplesmente não estornava.
+ */
+export function resolverRegra(
+  regras: readonly RegraEstornoVigente[],
+  tipo: TipoEstorno,
+  vendedorId: string | null,
+  data: Date,
+  categoriaVenda: CategoriaVenda | null = null,
+): RegraEstornoVigente | null {
+  const candidatas = regras.filter(
+    (regra) =>
+      regra.tipo === tipo &&
+      (regra.vendedorId === null || regra.vendedorId === vendedorId) &&
+      // Regra com categorias declaradas exige que a venda TENHA uma delas.
+      // Venda sem categoria congelada só casa com regra geral — é melhor não
+      // estornar do que estornar por suposição.
+      (regra.categoriasVenda.length === 0 ||
+        (categoriaVenda !== null && regra.categoriasVenda.includes(categoriaVenda))),
+  );
+
+  const porVendedor = candidatas.filter((regra) => regra.vendedorId !== null);
+  const padrao = candidatas.filter((regra) => regra.vendedorId === null);
+  const especificaDaCategoria = (regra: RegraEstornoVigente) =>
+    regra.categoriasVenda.length > 0;
+
+  return (
+    resolverVigentePorPrecedencia(porVendedor, data, especificaDaCategoria) ??
+    resolverVigentePorPrecedencia(padrao, data, especificaDaCategoria)
+  );
+}
+
+/**
+ * Decide se o cancelamento gera estorno e quanto.
+ *
+ * Devolve sempre um motivo legível — inclusive quando NÃO gera. Estorno é
+ * dinheiro tirado de alguém; "não gerou porque X" precisa ser tão auditável
+ * quanto "gerou por Y".
+ */
+export function avaliarEstorno(
+  fato: FatoCancelamento,
+  regras: readonly RegraEstornoVigente[],
+): DecisaoEstorno {
+  if (!fato.dataCancelamento) {
+    return { gera: false, motivo: "Cota não está cancelada." };
+  }
+
+  const tipo = tipoDoEstorno(fato);
+  const regra = resolverRegra(
+    regras,
+    tipo,
+    fato.vendedorId,
+    fato.dataCancelamento,
+    fato.categoriaVenda,
+  );
+
+  if (!regra) {
+    const escopo = fato.categoriaVenda ? ` para venda ${fato.categoriaVenda}` : "";
+    return {
+      gera: false,
+      motivo: `Sem regra de estorno vigente do tipo ${tipo}${escopo} na data do cancelamento.`,
+    };
+  }
+
+  if (fato.parcelasPagas >= regra.parcelaLimite) {
+    return {
+      gera: false,
+      motivo: `${fato.parcelasPagas} parcela(s) paga(s) — a regra estorna apenas abaixo de ${regra.parcelaLimite}.`,
+    };
+  }
+
+  const referencia = fato.valorReferencia ?? 0;
+  const valorEstorno = arredondar(Math.abs(percentual(referencia, regra.percentual)));
+
+  return {
+    gera: true,
+    tipo,
+    regraId: regra.id,
+    parcelaLimite: regra.parcelaLimite,
+    percentualAplicado: regra.percentual,
+    valorEstorno,
+    motivo:
+      `Cancelamento com ${fato.parcelasPagas} parcela(s) paga(s), abaixo do limite de ` +
+      `${regra.parcelaLimite}. Estorno de ${regra.percentual}% sobre ${referencia.toFixed(2)}.`,
+  };
+}
