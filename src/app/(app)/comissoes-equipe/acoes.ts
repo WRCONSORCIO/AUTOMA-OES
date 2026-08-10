@@ -30,10 +30,16 @@ export async function acaoApurar(
     revalidatePath("/comissoes-equipe");
 
     if (resumo.cotasComTabela === 0) {
+      // O nome do formulário vai na mensagem porque a tela tem dois parecidos:
+      // "Nova tabela de comissão" é o que a WR RECEBE da administradora, e
+      // "Nova tabela de comissão da equipe" é o que a WR PAGA. Preencher o
+      // primeiro achando que era o segundo deixa exatamente este resultado.
       return {
         erro:
           `Nenhuma das ${formatarNumero(resumo.cotasAvaliadas)} venda(s) tem tabela vigente para ` +
-          "a sua categoria. Cadastre a tabela em Tabelas e Flex e apure novamente.",
+          'a sua categoria. Em Tabelas e Flex, use o formulário "Nova tabela de comissão da ' +
+          'equipe" — não o "Nova tabela de comissão". O aviso no topo desta tela lista ' +
+          "quais categorias e anos faltam.",
       };
     }
 

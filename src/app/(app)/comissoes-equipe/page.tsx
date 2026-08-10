@@ -59,7 +59,8 @@ export default async function PaginaComissoesEquipe({
   const papel = texto(brutos, "papel");
   const categoria = texto(brutos, "categoria");
 
-  const [painel, tabelas, lacunas, gerencias, equipes] = await Promise.all([
+  const [painel, tabelas, lacunas, tabelasAdministradora, gerencias, equipes] =
+    await Promise.all([
     carregarPainelComissaoEquipe(
       {
         de: parseDataBr(parametros.de) ?? undefined,
@@ -73,6 +74,10 @@ export default async function PaginaComissoesEquipe({
     ),
     carregarTabelasEquipe(),
     lacunasDeTabela(),
+    // Quantas tabelas do OUTRO tipo existem. Sem este número, quem cadastrou a
+    // tabela errada lê "nenhuma tabela cadastrada" e conclui que o sistema
+    // perdeu o que ele acabou de salvar.
+    prisma.tabelaComissao.count({ where: { ativo: true } }),
     prisma.gerencia.findMany({
       where: { status: "ATIVO" },
       select: { id: true, nome: true },
@@ -83,7 +88,7 @@ export default async function PaginaComissoesEquipe({
       select: { id: true, nome: true },
       orderBy: { nome: "asc" },
     }),
-  ]);
+    ]);
 
   const podeApurar = podeAcessar(sessao.perfil, "comissoesEquipe", "editar");
 
@@ -95,13 +100,42 @@ export default async function PaginaComissoesEquipe({
         acoes={podeApurar ? <BotaoApurar /> : undefined}
       />
 
-      {tabelas.length > 0 && lacunas.length > 0 ? (
+      {lacunas.length === 0 && tabelas.length === 0 ? (
+        <Aviso tom="atencao">
+          Nenhuma tabela de comissão da equipe cadastrada, e nenhuma venda com categoria
+          resolvida. Comece pelas categorias em <strong>Comercial → Pendências de cadastro</strong>;
+          o que faltar de tabela aparece aqui depois.
+        </Aviso>
+      ) : null}
+
+      {lacunas.length > 0 ? (
         <Aviso tom="atencao">
           <p>
-            Há vendas com categoria resolvida que continuam sem comissão porque{" "}
-            <strong>não existe tabela vigente</strong> para a combinação. O sistema não arbitra
-            percentual: sem tabela, não calcula. Cadastre as que faltam em{" "}
-            <strong>Tabelas e Flex</strong>.
+            {tabelas.length === 0 ? (
+              <>
+                Não há <strong>nenhuma tabela de comissão da equipe</strong> cadastrada.
+                {tabelasAdministradora > 0 ? (
+                  <>
+                    {" "}
+                    Atenção ao nome: existem {formatarNumero(tabelasAdministradora)} tabela(s) de{" "}
+                    <strong>comissão da administradora</strong> cadastradas, que são outra coisa —
+                    aquelas dizem o que a WR RECEBE por parcela; estas dizem o que a WR PAGA à
+                    própria equipe sobre a venda. São dois formulários diferentes na mesma tela.
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                Há vendas com categoria resolvida que continuam sem comissão porque{" "}
+                <strong>não existe tabela vigente</strong> para a combinação.
+              </>
+            )}{" "}
+            O sistema não arbitra percentual: sem tabela, não calcula.
+          </p>
+          <p className="mt-2">
+            Vá em <strong>Administração → Tabelas e Flex</strong> e use o formulário{" "}
+            <strong>“Nova tabela de comissão da equipe”</strong> — não o “Nova tabela de comissão”.
+            Falta cadastrar:
           </p>
           <ul className="mt-2 list-disc space-y-0.5 pl-5">
             {lacunas.map((lacuna) => (
@@ -114,14 +148,10 @@ export default async function PaginaComissoesEquipe({
               </li>
             ))}
           </ul>
-        </Aviso>
-      ) : null}
-
-      {tabelas.length === 0 ? (
-        <Aviso tom="atencao">
-          Nenhuma tabela de comissão da equipe cadastrada. Enquanto não houver tabela vigente para
-          a categoria da venda, o sistema não tem percentual para calcular — cadastre em{" "}
-          <strong>Tabelas e Flex</strong>.
+          <p className="mt-2 text-xs">
+            A vigência da tabela precisa começar em uma data igual ou anterior à venda mais antiga
+            do ano listado — tabela que começa hoje não alcança venda de ano passado.
+          </p>
         </Aviso>
       ) : null}
 
