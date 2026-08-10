@@ -12,7 +12,8 @@ import {
   resolverVendedorEfetivo,
 } from "@/server/domain/regras";
 import { evento, type NovoEvento } from "@/shared/events/catalogo";
-import { publicar } from "@/shared/events/outbox-prisma";
+import { linhasDoOutbox } from "@/shared/events/outbox-prisma";
+import { novoId } from "@/shared/domain/identificador";
 import { drenarEventos } from "@/shared/events/handlers";
 import { contarVendasForaDoDocumento } from "@/modules/comercial/infrastructure/queries/vendas-fora-do-documento";
 import {
@@ -256,8 +257,53 @@ interface ContextoLote {
   erros: number;
 }
 
+/** O que uma linha do arquivo vai provocar no banco, ainda sem tocar nele. */
+interface PlanoCota {
+  linha: LinhaBase;
+  cotaId: string;
+  criacao: Prisma.CotaCreateManyInput | null;
+  atualizacao: Prisma.CotaUncheckedUpdateInput | null;
+  inalterada: boolean;
+  versao: Prisma.CotaVersaoCreateManyInput | null;
+  eventos: NovoEvento[];
+  efeitos: {
+    criados: number;
+    atualizados: number;
+    inalterados: number;
+    cancelados: number;
+    contemplados: number;
+  };
+}
+
+interface ErroLinha {
+  linha: number;
+  mensagem: string;
+  conteudo: string;
+}
+
+/**
+ * Processa um lote em duas etapas separadas de propósito: **planejar** e
+ * **aplicar**.
+ *
+ * O desenho anterior fazia as duas coisas por linha — consultava, decidia e
+ * gravava numa transação própria. Funcionava, mas o custo não estava no banco:
+ * medindo uma importação real de 4.630 cotas, o Postgres executou 3,6 s de um
+ * total de 53 s. O resto eram 89 mil idas e voltas e 23 mil transações. O gasto
+ * era de coordenação, não de trabalho.
+ *
+ * Planejar primeiro permite que o lote inteiro vá numa transação só. Para isso
+ * o id da cota precisa existir antes do INSERT — daí `novoId()`, sem o qual o
+ * evento não teria para onde apontar e voltaríamos a inserir uma por vez.
+ *
+ * A garantia que motivou o outbox continua de pé, agora na granularidade do
+ * lote: cota, versão e evento entram na MESMA transação. O processo caindo no
+ * meio não deixa venda gravada com estorno por calcular; deixa o lote inteiro
+ * de fora, e a próxima importação o recupera.
+ */
 async function processarLote(lote: LinhaBase[], ctx: ContextoLote): Promise<void> {
-  // Uma consulta por lote resolve todas as cotas já existentes.
+  const erros: ErroLinha[] = [];
+
+  // --- Leituras do lote: quatro consultas, não quatro por linha ---
   const existentes = await prisma.cota.findMany({
     where: {
       administradoraId: ctx.administradoraId,
@@ -267,6 +313,20 @@ async function processarLote(lote: LinhaBase[], ctx: ContextoLote): Promise<void
         cota: linha.cota,
         cpfCnpjCliente: linha.cpfCnpjCliente,
       })),
+    },
+    select: {
+      id: true,
+      administradoraId: true,
+      contrato: true,
+      grupo: true,
+      cota: true,
+      cpfCnpjCliente: true,
+      hashConteudo: true,
+      situacao: true,
+      contemplado: true,
+      emRecuperacao: true,
+      vendedorEfetivoId: true,
+      categoriaVenda: true,
     },
   });
 
@@ -283,7 +343,47 @@ async function processarLote(lote: LinhaBase[], ctx: ContextoLote): Promise<void
     ]),
   );
 
+  // Cotas com vendedor definido manualmente pela WR. O override tem precedência
+  // e a importação não pode desfazê-lo.
+  const comOverride = new Set(
+    (
+      await prisma.cotaVendedorOverride.findMany({
+        where: { cotaId: { in: existentes.map((cota) => cota.id) } },
+        select: { cotaId: true },
+      })
+    ).map((override) => override.cotaId),
+  );
+
+  await ctx.cache.carregarDocumentos(
+    lote.map((linha) => linha.cpfCnpjVendedor ?? "").filter(Boolean),
+  );
+
+  // Resolver o vendedor pode CRIAR cadastro, então acontece antes do
+  // planejamento: a cota referencia o vendedor por chave estrangeira.
+  const vendedorPorLinha = new Map<LinhaBase, string | null>();
   for (const linha of lote) {
+    try {
+      const vendedor = await garantirVendedorPorDocumento(
+        linha.cpfCnpjVendedor,
+        linha.nomeVendedor,
+        prisma,
+        ctx.cache,
+      );
+      if (vendedor?.criado) ctx.contadores.vendedoresCriados += 1;
+      vendedorPorLinha.set(linha, vendedor?.id ?? null);
+    } catch (erro) {
+      erros.push(descreverErro(linha, erro));
+    }
+  }
+
+  await ctx.cache.carregarHistoricos(
+    [...vendedorPorLinha.values()].filter((id): id is string => id !== null),
+  );
+
+  // --- Planejamento: só memória e cache ---
+  const planos: PlanoCota[] = [];
+  for (const linha of lote) {
+    if (!vendedorPorLinha.has(linha)) continue;
     try {
       const identidade = montarIdentidadeCota({
         administradoraId: ctx.administradoraId,
@@ -293,32 +393,103 @@ async function processarLote(lote: LinhaBase[], ctx: ContextoLote): Promise<void
         cpfCnpjCliente: linha.cpfCnpjCliente,
       });
       const existente = porIdentidade.get(chaveIdentidadeCota(identidade)) ?? null;
+      const vendedorAdmId = vendedorPorLinha.get(linha) ?? null;
 
-      const vendedor = await garantirVendedorPorDocumento(
-        linha.cpfCnpjVendedor,
-        linha.nomeVendedor,
-        prisma,
-        ctx.cache,
+      planos.push(
+        existente
+          ? await planejarAtualizacao(existente, comOverride.has(existente.id), linha, vendedorAdmId, ctx)
+          : await planejarCriacao(identidade, linha, vendedorAdmId, ctx),
       );
-      if (vendedor?.criado) ctx.contadores.vendedoresCriados += 1;
-
-      if (existente) {
-        await atualizarCota(existente, linha, vendedor?.id ?? null, ctx);
-      } else {
-        await criarCota(identidade, linha, vendedor?.id ?? null, ctx);
-      }
     } catch (erro) {
-      ctx.contadores.erros += 1;
-      await prisma.importacaoErro.create({
-        data: {
-          importacaoId: ctx.importacaoId,
-          linha: linha.numeroLinha,
-          mensagem: erro instanceof Error ? erro.message : "Erro ao gravar a cota.",
-          conteudo: `${linha.contrato} / ${linha.grupo}-${linha.cota}`,
-        },
-      });
+      erros.push(descreverErro(linha, erro));
     }
   }
+
+  // --- Aplicação ---
+  try {
+    await aplicar(planos, ctx);
+    for (const plano of planos) contabilizar(plano, ctx);
+  } catch {
+    // Uma linha ruim derruba a transação inteira e levaria junto 199 linhas
+    // boas. Refaz o lote uma a uma para isolar a culpada: é lento, mas só
+    // acontece no lote com defeito, e o alternativo seria perder o lote todo.
+    for (const plano of planos) {
+      try {
+        await aplicar([plano], ctx);
+        contabilizar(plano, ctx);
+      } catch (erro) {
+        erros.push(descreverErro(plano.linha, erro));
+      }
+    }
+  }
+
+  if (erros.length > 0) {
+    ctx.contadores.erros += erros.length;
+    await prisma.importacaoErro.createMany({
+      data: erros.map((erro) => ({ importacaoId: ctx.importacaoId, ...erro })),
+    });
+  }
+}
+
+function descreverErro(linha: LinhaBase, erro: unknown): ErroLinha {
+  return {
+    linha: linha.numeroLinha,
+    mensagem: erro instanceof Error ? erro.message : "Erro ao gravar a cota.",
+    conteudo: `${linha.contrato} / ${linha.grupo}-${linha.cota}`,
+  };
+}
+
+/**
+ * Grava o que os planos descrevem, numa transação só.
+ *
+ * A ordem das operações não é arbitrária: a versão e o evento referenciam a
+ * cota, então ela entra primeiro.
+ */
+async function aplicar(planos: readonly PlanoCota[], ctx: ContextoLote): Promise<void> {
+  const criacoes = planos.map((plano) => plano.criacao).filter((item) => item !== null);
+  const versoes = planos.map((plano) => plano.versao).filter((item) => item !== null);
+  const inalteradas = planos.filter((plano) => plano.inalterada).map((plano) => plano.cotaId);
+  const eventos = planos.flatMap((plano) => plano.eventos);
+
+  const operacoes: Prisma.PrismaPromise<unknown>[] = [];
+
+  if (criacoes.length > 0) operacoes.push(prisma.cota.createMany({ data: criacoes }));
+
+  for (const plano of planos) {
+    if (!plano.atualizacao) continue;
+    operacoes.push(
+      prisma.cota.update({ where: { id: plano.cotaId }, data: plano.atualizacao }),
+    );
+  }
+
+  // Cota inalterada só precisa registrar que este arquivo a mencionou. Uma
+  // única operação cobre todas as do lote.
+  if (inalteradas.length > 0) {
+    operacoes.push(
+      prisma.cota.updateMany({
+        where: { id: { in: inalteradas } },
+        data: { ultimaImportacaoId: ctx.importacaoId },
+      }),
+    );
+  }
+
+  if (versoes.length > 0) operacoes.push(prisma.cotaVersao.createMany({ data: versoes }));
+  if (eventos.length > 0) {
+    operacoes.push(prisma.eventoDominio.createMany({ data: linhasDoOutbox(eventos) }));
+  }
+
+  if (operacoes.length === 0) return;
+  await prisma.$transaction(operacoes);
+}
+
+/** Contadores e escopo de reapuramento só depois da gravação confirmada. */
+function contabilizar(plano: PlanoCota, ctx: ContextoLote): void {
+  ctx.contadores.criados += plano.efeitos.criados;
+  ctx.contadores.atualizados += plano.efeitos.atualizados;
+  ctx.contadores.inalterados += plano.efeitos.inalterados;
+  ctx.contadores.cancelados += plano.efeitos.cancelados;
+  ctx.contadores.contemplados += plano.efeitos.contemplados;
+  if (!plano.inalterada) ctx.cotasTocadas.add(plano.cotaId);
 }
 
 /** Campos que a administradora controla e que podem mudar entre importações. */
@@ -371,12 +542,12 @@ function decimalOuNulo(valor: number | null): Prisma.Decimal | null {
   return new Prisma.Decimal(valor.toFixed(2));
 }
 
-async function criarCota(
+async function planejarCriacao(
   identidade: ReturnType<typeof montarIdentidadeCota>,
   linha: LinhaBase,
   vendedorAdmId: string | null,
   ctx: ContextoLote,
-): Promise<void> {
+): Promise<PlanoCota> {
   const dados = camposMutaveis(linha);
 
   // O override é consultado antes da criação: uma transferência pode ter sido
@@ -397,11 +568,10 @@ async function criarCota(
     recuperacaoId = recuperacao?.id ?? null;
   }
 
+  // A alocação sai do histórico do documento resolvido NA DATA DA VENDA, com a
+  // alocação atual do cadastro como saída quando nenhum período cobre a data.
   const alocacao = efetivo.vendedorId
-    ? await prisma.vendedor.findUnique({
-        where: { id: efetivo.vendedorId },
-        select: { equipeId: true, gerenciaId: true },
-      })
+    ? await ctx.cache.alocacaoNaData(efetivo.vendedorId, dataVenda ?? new Date())
     : null;
 
   const agora = new Date();
@@ -409,214 +579,218 @@ async function criarCota(
 
   const conteudo = hashConteudo(dados);
 
-  // A cota e o evento entram na MESMA transação. Sem isso, o processo caindo
-  // entre as duas escritas deixaria a venda gravada e o estorno nunca
-  // calculado — sem erro, sem alerta, e sem ninguém perceber até o fechamento
-  // não bater.
-  await prisma.$transaction(async (tx) => {
-    const cota = await tx.cota.create({
-      data: {
-        ...identidade,
-        ...dados,
-        vendedorAdmId,
+  // O id nasce aqui, e não no banco: o evento abaixo precisa apontar para a
+  // cota antes de ela ser inserida, que é o que permite o lote inteiro entrar
+  // numa transação só.
+  const cotaId = novoId();
+
+  const eventos: NovoEvento[] = [
+    evento(
+      "carteira.cota.criada",
+      "Cota",
+      cotaId,
+      {
+        cotaId,
+        administradoraId: ctx.administradoraId,
         vendedorEfetivoId: efetivo.vendedorId,
-        origemVendedor: efetivo.origem,
-        categoriaVenda,
-        categoriaVendaFixadaEm: dataVenda ? agora : null,
-        emRecuperacao,
-        recuperacaoId,
-        recuperacaoFixadaEm: emRecuperacao ? agora : null,
-        equipeId: alocacao?.equipeId ?? null,
-        gerenciaId: alocacao?.gerenciaId ?? null,
-        hashConteudo: conteudo,
-        primeiraImportacaoId: ctx.importacaoId,
-        ultimaImportacaoId: ctx.importacaoId,
-        versoes: {
-          create: {
-            importacaoId: ctx.importacaoId,
-            hashConteudo: conteudo,
-            dados: serializarDados(dados),
-          },
-        },
+        dataVenda: dataVenda ? emIso(dataVenda) : null,
+        valorCredito: linha.valorCredito ?? null,
       },
-      select: { id: true },
-    });
+      metadadosDe(ctx),
+    ),
+  ];
 
-    const eventos: NovoEvento[] = [
-      evento(
-        "carteira.cota.criada",
-        "Cota",
-        cota.id,
-        {
-          cotaId: cota.id,
-          administradoraId: ctx.administradoraId,
-          vendedorEfetivoId: efetivo.vendedorId,
-          dataVenda: dataVenda ? emIso(dataVenda) : null,
-          valorCredito: linha.valorCredito ?? null,
-        },
-        metadadosDe(ctx),
-      ),
-    ];
+  if (linha.situacao === "CANCELADO" && linha.dataCancelamento) {
+    eventos.push(
+      eventoCancelamento(cotaId, linha, emRecuperacao, efetivo.vendedorId, categoriaVenda, ctx),
+    );
+  }
 
-    if (linha.situacao === "CANCELADO" && linha.dataCancelamento) {
-      eventos.push(
-        eventoCancelamento(
-          cota.id,
-          linha,
-          emRecuperacao,
-          efetivo.vendedorId,
-          categoriaVenda,
-          ctx,
-        ),
-      );
-    }
-
-    await publicar(tx, eventos);
-    ctx.cotasTocadas.add(cota.id);
-  });
-
-  ctx.contadores.criados += 1;
-  if (linha.situacao === "CANCELADO") ctx.contadores.cancelados += 1;
-  if (linha.contemplado) ctx.contadores.contemplados += 1;
+  return {
+    linha,
+    cotaId,
+    criacao: {
+      id: cotaId,
+      ...identidade,
+      ...dados,
+      vendedorAdmId,
+      vendedorEfetivoId: efetivo.vendedorId,
+      origemVendedor: efetivo.origem,
+      categoriaVenda,
+      categoriaVendaFixadaEm: dataVenda ? agora : null,
+      emRecuperacao,
+      recuperacaoId,
+      recuperacaoFixadaEm: emRecuperacao ? agora : null,
+      equipeId: alocacao?.equipeId ?? null,
+      gerenciaId: alocacao?.gerenciaId ?? null,
+      hashConteudo: conteudo,
+      primeiraImportacaoId: ctx.importacaoId,
+      ultimaImportacaoId: ctx.importacaoId,
+    },
+    atualizacao: null,
+    inalterada: false,
+    versao: {
+      cotaId,
+      importacaoId: ctx.importacaoId,
+      hashConteudo: conteudo,
+      dados: serializarDados(dados),
+    },
+    eventos,
+    efeitos: {
+      criados: 1,
+      atualizados: 0,
+      inalterados: 0,
+      cancelados: linha.situacao === "CANCELADO" ? 1 : 0,
+      contemplados: linha.contemplado ? 1 : 0,
+    },
+  };
 }
 
-async function atualizarCota(
-  existente: {
-    id: string;
-    hashConteudo: string;
-    situacao: string;
-    contemplado: boolean;
-    emRecuperacao: boolean;
-    geraEstorno: boolean;
-    vendedorEfetivoId: string | null;
-    categoriaVenda: CategoriaVendedor | null;
-  },
+interface CotaExistente {
+  id: string;
+  hashConteudo: string;
+  situacao: string;
+  contemplado: boolean;
+  emRecuperacao: boolean;
+  vendedorEfetivoId: string | null;
+  categoriaVenda: CategoriaVendedor | null;
+}
+
+async function planejarAtualizacao(
+  existente: CotaExistente,
+  temOverride: boolean,
   linha: LinhaBase,
   vendedorAdmId: string | null,
   ctx: ContextoLote,
-): Promise<void> {
+): Promise<PlanoCota> {
   const dados = camposMutaveis(linha);
   const conteudo = hashConteudo(dados);
 
-  if (conteudo === existente.hashConteudo) {
-    ctx.contadores.inalterados += 1;
-    await prisma.cota.update({
-      where: { id: existente.id },
-      data: { ultimaImportacaoId: ctx.importacaoId },
-    });
-    return;
-  }
+  const semAlteracao: PlanoCota = {
+    linha,
+    cotaId: existente.id,
+    criacao: null,
+    atualizacao: null,
+    inalterada: true,
+    versao: null,
+    eventos: [],
+    efeitos: { criados: 0, atualizados: 0, inalterados: 1, cancelados: 0, contemplados: 0 },
+  };
+
+  if (conteudo === existente.hashConteudo) return semAlteracao;
 
   const virouCancelada = existente.situacao !== "CANCELADO" && linha.situacao === "CANCELADO";
   const virouContemplada = !existente.contemplado && linha.contemplado;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.cota.update({
-      where: { id: existente.id },
-      data: {
-        ...dados,
-        // O vendedor da administradora pode ser corrigido por ela; o override
-        // interno da WR continua tendo precedência e não é tocado aqui.
-        vendedorAdmId,
-        hashConteudo: conteudo,
-        ultimaImportacaoId: ctx.importacaoId,
-        versoes: {
-          create: {
-            importacaoId: ctx.importacaoId,
-            hashConteudo: conteudo,
-            dados: serializarDados(dados),
-          },
+  const eventos: NovoEvento[] = [
+    evento(
+      "carteira.cota.alterada",
+      "Cota",
+      existente.id,
+      {
+        cotaId: existente.id,
+        administradoraId: ctx.administradoraId,
+        alteracoes: {
+          situacao: [existente.situacao, linha.situacao],
+          parcelasPagas: [null, linha.parcelasPagas],
         },
       },
-    });
+      metadadosDe(ctx),
+    ),
+  ];
 
-    const eventos: NovoEvento[] = [
+  // Só na TRANSIÇÃO para cancelada. Republicar o cancelamento a cada
+  // importação encheria a fila de eventos que o handler descartaria por já
+  // existir estorno — funcionaria, mas transformaria o outbox em lixo.
+  if (virouCancelada && linha.dataCancelamento) {
+    eventos.push(
+      eventoCancelamento(
+        existente.id,
+        linha,
+        existente.emRecuperacao,
+        existente.vendedorEfetivoId,
+        existente.categoriaVenda,
+        ctx,
+      ),
+    );
+  }
+
+  if (virouContemplada) {
+    eventos.push(
       evento(
-        "carteira.cota.alterada",
+        "carteira.cota.contemplada",
         "Cota",
         existente.id,
         {
           cotaId: existente.id,
           administradoraId: ctx.administradoraId,
-          alteracoes: {
-            situacao: [existente.situacao, linha.situacao],
-            parcelasPagas: [null, linha.parcelasPagas],
-          },
+          dataContemplacao: linha.dataContemplacao ? emIso(linha.dataContemplacao) : null,
         },
         metadadosDe(ctx),
       ),
-    ];
+    );
+  }
 
-    // Só na TRANSIÇÃO para cancelada. Republicar o cancelamento a cada
-    // importação encheria a fila de eventos que o handler descartaria por já
-    // existir estorno — funcionaria, mas transformaria o outbox em lixo.
-    if (virouCancelada && linha.dataCancelamento) {
-      eventos.push(
-        eventoCancelamento(
-          existente.id,
-          linha,
-          existente.emRecuperacao,
-          existente.vendedorEfetivoId,
-          existente.categoriaVenda,
-          ctx,
-        ),
-      );
-    }
-
-    if (virouContemplada) {
-      eventos.push(
-        evento(
-          "carteira.cota.contemplada",
-          "Cota",
-          existente.id,
-          {
-            cotaId: existente.id,
-            administradoraId: ctx.administradoraId,
-            dataContemplacao: linha.dataContemplacao ? emIso(linha.dataContemplacao) : null,
-          },
-          metadadosDe(ctx),
-        ),
-      );
-    }
-
-    await publicar(tx, eventos);
-    ctx.cotasTocadas.add(existente.id);
-  });
-
-  ctx.contadores.atualizados += 1;
-  if (virouCancelada) ctx.contadores.cancelados += 1;
-  if (virouContemplada) ctx.contadores.contemplados += 1;
-
-  // Cota sem override precisa refletir a correção de vendedor da administradora.
-  await sincronizarVendedorEfetivo(existente.id, vendedorAdmId);
+  return {
+    linha,
+    cotaId: existente.id,
+    criacao: null,
+    atualizacao: {
+      ...dados,
+      // O vendedor da administradora pode ser corrigido por ela; o override
+      // interno da WR continua tendo precedência e não é tocado aqui.
+      vendedorAdmId,
+      hashConteudo: conteudo,
+      ultimaImportacaoId: ctx.importacaoId,
+      ...(await sincronizacaoDoVendedor(temOverride, vendedorAdmId, linha, ctx)),
+    },
+    inalterada: false,
+    versao: {
+      cotaId: existente.id,
+      importacaoId: ctx.importacaoId,
+      hashConteudo: conteudo,
+      dados: serializarDados(dados),
+    },
+    eventos,
+    efeitos: {
+      criados: 0,
+      atualizados: 1,
+      inalterados: 0,
+      cancelados: virouCancelada ? 1 : 0,
+      contemplados: virouContemplada ? 1 : 0,
+    },
+  };
 }
 
-async function sincronizarVendedorEfetivo(
-  cotaId: string,
+/**
+ * Cota sem override precisa refletir a correção de vendedor da administradora.
+ *
+ * Antes isso era um `update` separado depois da transação; virou parte do mesmo
+ * `update` porque duas escritas na mesma linha custam o dobro e não protegiam
+ * nada — se a segunda falhasse, a cota ficava com vendedor velho e conteúdo
+ * novo, que é pior do que não ter atualizado.
+ */
+async function sincronizacaoDoVendedor(
+  temOverride: boolean,
   vendedorAdmId: string | null,
-): Promise<void> {
-  const override = await prisma.cotaVendedorOverride.findUnique({
-    where: { cotaId },
-    select: { vendedorId: true },
-  });
-  if (override) return;
+  linha: LinhaBase,
+  ctx: ContextoLote,
+): Promise<Prisma.CotaUncheckedUpdateInput> {
+  if (temOverride) return {};
 
-  const vendedor = vendedorAdmId
-    ? await prisma.vendedor.findUnique({
-        where: { id: vendedorAdmId },
-        select: { equipeId: true, gerenciaId: true },
-      })
+  const alocacao = vendedorAdmId
+    ? await ctx.cache.alocacaoNaData(
+        vendedorAdmId,
+        linha.dataVenda ?? linha.dataEntrada ?? new Date(),
+      )
     : null;
 
-  await prisma.cota.update({
-    where: { id: cotaId },
-    data: {
-      vendedorEfetivoId: vendedorAdmId,
-      origemVendedor: vendedorAdmId ? "ADMINISTRADORA" : "NAO_IDENTIFICADO",
-      equipeId: vendedor?.equipeId ?? null,
-      gerenciaId: vendedor?.gerenciaId ?? null,
-    },
-  });
+  return {
+    vendedorEfetivoId: vendedorAdmId,
+    origemVendedor: vendedorAdmId ? "ADMINISTRADORA" : "NAO_IDENTIFICADO",
+    equipeId: alocacao?.equipeId ?? null,
+    gerenciaId: alocacao?.gerenciaId ?? null,
+  };
 }
 
 /** Data em ISO curto: é assim que o payload do evento guarda dia. */

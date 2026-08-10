@@ -87,6 +87,12 @@ export interface AlocacaoVendedor {
   gerenciaId: string | null;
 }
 
+/** Um trecho do histórico de alocação, como o cache o guarda. */
+export interface PeriodoAlocacao extends AlocacaoVendedor {
+  vigenteDe: Date;
+  vigenteAte: Date | null;
+}
+
 /**
  * Equipe e gerência do vendedor na data da venda.
  *
@@ -145,6 +151,8 @@ export class CacheVendedores {
   private categorias = new Map<string, PeriodoCategoria[]>();
   private recuperacoes = new Map<string, PeriodoRecuperacao[]>();
   private alocacoes = new Map<string, AlocacaoVendedor>();
+  private periodosAlocacao = new Map<string, PeriodoAlocacao[]>();
+  private alocacaoAtual = new Map<string, AlocacaoVendedor>();
   private porDocumento = new Map<string, string | null>();
   private pessoaPorVendedor = new Map<string, string | null>();
 
@@ -182,9 +190,42 @@ export class CacheVendedores {
     const guardada = this.alocacoes.get(chave);
     if (guardada) return guardada;
 
-    const alocacao = await alocacaoNaData(vendedorId, dataVenda, this.db);
+    const alocacao = this.periodosAlocacao.has(vendedorId)
+      ? await this.resolverAlocacao(vendedorId, dataVenda)
+      : await alocacaoNaData(vendedorId, dataVenda, this.db);
     this.alocacoes.set(chave, alocacao);
     return alocacao;
+  }
+
+  /** Mesma regra de `alocacaoNaData`, resolvida sobre os períodos já em memória. */
+  private async resolverAlocacao(
+    vendedorId: string,
+    dataVenda: Date,
+  ): Promise<AlocacaoVendedor> {
+    const dia = inicioDoDiaUtc(dataVenda);
+    const periodo = (this.periodosAlocacao.get(vendedorId) ?? []).find(
+      (item) =>
+        inicioDoDiaUtc(item.vigenteDe) <= dia &&
+        (item.vigenteAte === null || inicioDoDiaUtc(item.vigenteAte) >= dia),
+    );
+    if (periodo) return { equipeId: periodo.equipeId, gerenciaId: periodo.gerenciaId };
+
+    // Sem período que cubra a data, vale a alocação atual do cadastro — a
+    // mesma saída de `alocacaoNaData`, e cacheada por vendedor porque a
+    // resposta não depende da data.
+    const atual = this.alocacaoAtual.get(vendedorId);
+    if (atual) return atual;
+
+    const vendedor = await this.db.vendedor.findUnique({
+      where: { id: vendedorId },
+      select: { equipeId: true, gerenciaId: true },
+    });
+    const resolvida = {
+      equipeId: vendedor?.equipeId ?? null,
+      gerenciaId: vendedor?.gerenciaId ?? null,
+    };
+    this.alocacaoAtual.set(vendedorId, resolvida);
+    return resolvida;
   }
 
   async recuperacaoNaData(
@@ -197,6 +238,90 @@ export class CacheVendedores {
       this.recuperacoes.set(vendedorId, periodos);
     }
     return encontrarRecuperacaoNaData(periodos, dataVenda);
+  }
+
+  /**
+   * Resolve muitos documentos numa consulta só.
+   *
+   * Sem isso, o primeiro lote da importação faz uma ida ao banco por linha até
+   * o cache encher — e num arquivo com milhares de linhas é justamente esse
+   * aquecimento que domina o tempo. Documento ausente do banco fica registrado
+   * como ausente: o negativo também é resposta, e repetir a pergunta não muda
+   * o resultado.
+   */
+  async carregarDocumentos(documentos: readonly string[]): Promise<void> {
+    const faltantes = [
+      ...new Set(
+        documentos
+          .map((documento) => normalizarDocumento(documento))
+          .filter((chave) => chave && !this.porDocumento.has(chave)),
+      ),
+    ];
+    if (faltantes.length === 0) return;
+
+    const encontrados = await this.db.vendedor.findMany({
+      where: { cpfCnpj: { in: faltantes } },
+      select: { id: true, cpfCnpj: true, pessoaId: true },
+    });
+
+    for (const vendedor of encontrados) {
+      this.porDocumento.set(vendedor.cpfCnpj, vendedor.id);
+      this.pessoaPorVendedor.set(vendedor.id, vendedor.pessoaId);
+    }
+    for (const chave of faltantes) {
+      if (!this.porDocumento.has(chave)) this.porDocumento.set(chave, null);
+    }
+  }
+
+  /**
+   * Pré-carrega os históricos de categoria, recuperação e alocação de vários
+   * documentos de uma vez — três consultas no lugar de três por vendedor.
+   */
+  async carregarHistoricos(vendedorIds: readonly string[]): Promise<void> {
+    const faltantes = [
+      ...new Set(vendedorIds.filter((id) => !this.categorias.has(id))),
+    ];
+    if (faltantes.length === 0) return;
+
+    const [categorias, recuperacoes, alocacoes] = await Promise.all([
+      this.db.vendedorCategoriaHistorico.findMany({
+        where: { vendedorId: { in: faltantes } },
+        select: { vendedorId: true, categoria: true, vigenteDe: true, vigenteAte: true },
+        orderBy: { vigenteDe: "asc" },
+      }),
+      this.db.vendedorRecuperacao.findMany({
+        where: { vendedorId: { in: faltantes } },
+        select: { id: true, vendedorId: true, dataInicio: true, dataFim: true },
+        orderBy: { dataInicio: "asc" },
+      }),
+      this.db.vendedorAlocacaoHistorico.findMany({
+        where: { vendedorId: { in: faltantes } },
+        select: {
+          vendedorId: true,
+          equipeId: true,
+          gerenciaId: true,
+          vigenteDe: true,
+          vigenteAte: true,
+        },
+        orderBy: { vigenteDe: "desc" },
+      }),
+    ]);
+
+    // Inicializa TODOS os pedidos, inclusive os sem nenhuma linha: cadastro sem
+    // histórico é uma resposta legítima, e sem a entrada vazia o cache
+    // perguntaria de novo a cada venda desse vendedor.
+    for (const id of faltantes) {
+      this.categorias.set(id, []);
+      this.recuperacoes.set(id, []);
+      this.periodosAlocacao.set(id, []);
+    }
+    for (const linha of categorias) {
+      if (linha.vendedorId) this.categorias.get(linha.vendedorId)?.push(linha);
+    }
+    for (const linha of recuperacoes) {
+      if (linha.vendedorId) this.recuperacoes.get(linha.vendedorId)?.push(linha);
+    }
+    for (const linha of alocacoes) this.periodosAlocacao.get(linha.vendedorId)?.push(linha);
   }
 
   async idPorDocumento(documento: string): Promise<string | null> {
@@ -213,15 +338,32 @@ export class CacheVendedores {
     return vendedor?.id ?? null;
   }
 
+  /**
+   * Registra um cadastro recém-criado pela própria importação.
+   *
+   * Ele nasce sem histórico nenhum, e é isso que os mapas vazios afirmam. Sem
+   * a afirmação explícita o cache trataria a ausência como "ainda não
+   * perguntei" e iria ao banco de novo a cada venda desse vendedor — que num
+   * arquivo com base nova é a maioria das linhas.
+   */
   registrar(documento: string, vendedorId: string, pessoaId?: string | null): void {
     this.porDocumento.set(normalizarDocumento(documento), vendedorId);
     if (pessoaId !== undefined) this.pessoaPorVendedor.set(vendedorId, pessoaId);
+    this.categorias.set(vendedorId, []);
+    this.recuperacoes.set(vendedorId, []);
+    this.periodosAlocacao.set(vendedorId, []);
+    this.alocacaoAtual.set(vendedorId, { equipeId: null, gerenciaId: null });
   }
 
   /** Invalida o cache do DOCUMENTO, que é o dono dos períodos. */
   invalidar(vendedorId: string): void {
     this.categorias.delete(vendedorId);
     this.recuperacoes.delete(vendedorId);
+    this.periodosAlocacao.delete(vendedorId);
+    this.alocacaoAtual.delete(vendedorId);
+    for (const chave of this.alocacoes.keys()) {
+      if (chave.startsWith(`${vendedorId}|`)) this.alocacoes.delete(chave);
+    }
   }
 }
 

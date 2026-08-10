@@ -30,8 +30,8 @@ function outboxFake(eventos: EventoPendente[]): PortaOutbox & {
     async buscarPendentes(limite) {
       return eventos.slice(0, limite);
     },
-    async marcarProcessado(eventoId) {
-      processados.push(eventoId);
+    async marcarProcessados(eventoIds) {
+      processados.push(...eventoIds);
     },
     async marcarFalha(eventoId, erro) {
       falhados.set(eventoId, erro);

@@ -178,16 +178,19 @@ export async function apurarComissoesEquipe(options?: {
 
     resumo.linhasRemovidas += await removerObsoletas(gravadas, desejadas);
 
+    const novas: LinhaDesejada[] = [];
+    const alteradas: LinhaDesejada[] = [];
+
     for (const linha of desejadas) {
       resumo.valorPrevisto += linha.valorPrevisto;
       resumo.valorLiberado += linha.valorLiberado;
 
       const atual = gravadas.get(`${linha.cotaId}|${linha.papel}`);
-      if (atual && naoMudou(atual, linha)) continue;
-
-      await gravarLinha(linha);
-      resumo.linhasGravadas += 1;
+      if (!atual) novas.push(linha);
+      else if (!naoMudou(atual, linha)) alteradas.push(linha);
     }
+
+    resumo.linhasGravadas += await gravarLinhas(novas, alteradas);
 
     if (options?.cotaIds && cotas.length < TAMANHO_LOTE) break;
   }
@@ -244,8 +247,8 @@ interface LinhaDesejada {
 
 type LinhaGravada = Omit<LinhaDesejada, "cotaId" | "papel">;
 
-async function gravarLinha(linha: LinhaDesejada): Promise<void> {
-  const dados = {
+function dadosDaLinha(linha: LinhaDesejada) {
+  return {
     categoriaVenda: linha.categoriaVenda,
     pessoaId: linha.pessoaId,
     equipeId: linha.equipeId,
@@ -260,12 +263,64 @@ async function gravarLinha(linha: LinhaDesejada): Promise<void> {
     regra: linha.regra,
     calculadoEm: new Date(),
   };
+}
 
-  await prisma.comissaoEquipe.upsert({
-    where: { cotaId_papel: { cotaId: linha.cotaId, papel: linha.papel } },
-    create: { cotaId: linha.cotaId, papel: linha.papel, ...dados },
-    update: dados,
-  });
+/**
+ * Grava o lote inteiro numa transação só.
+ *
+ * A separação entre novas e alteradas vem de graça: as linhas já gravadas foram
+ * lidas para decidir o que mudou, então saber quais existem não custa consulta
+ * nenhuma. Isso permite trocar um `upsert` por linha — que era uma ida ao banco
+ * para cada uma das milhares de comissões de uma importação — por um
+ * `createMany` e os poucos `update` do que de fato mudou.
+ */
+async function gravarLinhas(
+  novas: readonly LinhaDesejada[],
+  alteradas: readonly LinhaDesejada[],
+): Promise<number> {
+  if (novas.length === 0 && alteradas.length === 0) return 0;
+
+  const operacoes: Prisma.PrismaPromise<unknown>[] = [];
+
+  if (novas.length > 0) {
+    operacoes.push(
+      prisma.comissaoEquipe.createMany({
+        data: novas.map((linha) => ({
+          cotaId: linha.cotaId,
+          papel: linha.papel,
+          ...dadosDaLinha(linha),
+        })),
+      }),
+    );
+  }
+
+  for (const linha of alteradas) {
+    operacoes.push(
+      prisma.comissaoEquipe.update({
+        where: { cotaId_papel: { cotaId: linha.cotaId, papel: linha.papel } },
+        data: dadosDaLinha(linha),
+      }),
+    );
+  }
+
+  try {
+    await prisma.$transaction(operacoes);
+  } catch {
+    // Outra apuração rodando ao mesmo tempo pode ter inserido a linha entre a
+    // leitura e a gravação, e aí o `createMany` inteiro cai. O `upsert` linha a
+    // linha resolve o conflito e é lento o bastante para não valer como caminho
+    // normal — mas é o certo como saída de emergência.
+    for (const linha of [...novas, ...alteradas]) {
+      const dados = dadosDaLinha(linha);
+      await prisma.comissaoEquipe.upsert({
+        where: { cotaId_papel: { cotaId: linha.cotaId, papel: linha.papel } },
+        create: { cotaId: linha.cotaId, papel: linha.papel, ...dados },
+        update: dados,
+      });
+    }
+  }
+
+  return novas.length + alteradas.length;
 }
 
 /** Reapurar não pode reescrever linhas idênticas: evita gravação e ruído. */

@@ -43,17 +43,32 @@ export async function publicar(
   const lista = Array.isArray(eventos) ? eventos : [eventos as NovoEvento];
   if (lista.length === 0) return;
 
-  await tx.eventoDominio.createMany({
-    data: lista.map((novo) => ({
-      tipo: novo.tipo,
-      versao: novo.versao ?? 1,
-      agregado: novo.agregado,
-      agregadoId: novo.agregadoId,
-      payload: novo.payload as Prisma.InputJsonValue,
-      metadados: (novo.metadados ?? {}) as Prisma.InputJsonValue,
-      ocorridoEm: novo.ocorridoEm ?? new Date(),
-    })),
-  });
+  await tx.eventoDominio.createMany({ data: linhasDoOutbox(lista) });
+}
+
+/**
+ * As linhas que `publicar` gravaria, sem gravá-las.
+ *
+ * Serve a quem monta uma transação na forma de array — `prisma.$transaction([
+ * ...])` recebe operações prontas, não uma função que aguarda. A importação em
+ * lote usa essa forma para mandar o lote inteiro numa só viagem ao banco, e
+ * precisa da lista de eventos como mais uma operação da fila.
+ *
+ * Continua sendo a MESMA transação: a garantia de que fato e evento entram
+ * juntos vale igual, só que na granularidade do lote.
+ */
+export function linhasDoOutbox(
+  eventos: readonly NovoEvento[],
+): Prisma.EventoDominioCreateManyInput[] {
+  return eventos.map((novo) => ({
+    tipo: novo.tipo,
+    versao: novo.versao ?? 1,
+    agregado: novo.agregado,
+    agregadoId: novo.agregadoId,
+    payload: novo.payload as Prisma.InputJsonValue,
+    metadados: (novo.metadados ?? {}) as Prisma.InputJsonValue,
+    ocorridoEm: novo.ocorridoEm ?? new Date(),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -101,9 +116,9 @@ export const outboxPrisma: PortaOutbox = {
     }));
   },
 
-  async marcarProcessado(eventoId: string, agora: Date): Promise<void> {
-    await prisma.eventoDominio.update({
-      where: { id: eventoId },
+  async marcarProcessados(eventoIds: readonly string[], agora: Date): Promise<void> {
+    await prisma.eventoDominio.updateMany({
+      where: { id: { in: [...eventoIds] } },
       data: { status: "PROCESSADO", processadoEm: agora, ultimoErro: null },
     });
   },

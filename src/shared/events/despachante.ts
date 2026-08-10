@@ -36,7 +36,15 @@ export interface EventoPendente {
 export interface PortaOutbox {
   /** Pendentes cujo backoff já venceu, mais antigos primeiro. */
   buscarPendentes(limite: number, agora: Date): Promise<EventoPendente[]>;
-  marcarProcessado(eventoId: string, agora: Date): Promise<void>;
+  /**
+   * Fecha de uma vez todos os eventos da rodada que correram sem erro.
+   *
+   * É seguro fechar só no fim porque a proteção contra repetição não está
+   * aqui: está na reserva de `(eventoId, handler)`. O processo caindo depois
+   * dos handlers e antes deste fechamento faz o evento voltar na próxima
+   * rodada, e a reserva já existente impede que ele seja aplicado de novo.
+   */
+  marcarProcessados(eventoIds: readonly string[], agora: Date): Promise<void>;
   marcarFalha(
     eventoId: string,
     erro: string,
@@ -112,6 +120,7 @@ export async function despachar(
   let entregasIgnoradas = 0;
   let entregasFalhas = 0;
   let eventosComFalha = 0;
+  const concluidos: string[] = [];
 
   for (const { evento, tentativas } of pendentes) {
     const handlers = registro.para(evento.tipo);
@@ -139,21 +148,24 @@ export async function despachar(
       }
     }
 
-    const momento = relogio();
     if (erros.length === 0) {
-      await porta.marcarProcessado(evento.id, momento);
-    } else {
-      eventosComFalha += 1;
-      // `tentativas` é o que já foi gasto; esta rodada é a seguinte. Passar o
-      // valor real é o que faz o backoff crescer de fato a cada retry.
-      await porta.marcarFalha(
-        evento.id,
-        erros.join(" | "),
-        calcularBackoff(tentativas + 1, maxTentativas, momento),
-        momento,
-      );
+      concluidos.push(evento.id);
+      continue;
     }
+
+    const momento = relogio();
+    eventosComFalha += 1;
+    // `tentativas` é o que já foi gasto; esta rodada é a seguinte. Passar o
+    // valor real é o que faz o backoff crescer de fato a cada retry.
+    await porta.marcarFalha(
+      evento.id,
+      erros.join(" | "),
+      calcularBackoff(tentativas + 1, maxTentativas, momento),
+      momento,
+    );
   }
+
+  if (concluidos.length > 0) await porta.marcarProcessados(concluidos, relogio());
 
   return {
     eventos: pendentes.length,
