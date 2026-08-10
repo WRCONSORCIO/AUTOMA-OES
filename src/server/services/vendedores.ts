@@ -15,6 +15,7 @@ import {
   type PeriodoCategoria,
   type PeriodoRecuperacao,
 } from "@/server/domain/regras";
+import { reavaliarEstornos } from "@/modules/apuracao/application/reavaliar-estorno";
 import { registrarAuditoria } from "./auditoria";
 import {
   criarPessoaParaVendedor,
@@ -50,7 +51,10 @@ export async function carregarRecuperacoes(
   db: Cliente = prisma,
 ): Promise<PeriodoRecuperacao[]> {
   const registros = await db.vendedorRecuperacao.findMany({
-    where: { vendedorId },
+    // Cancelada é registro que não deveria ter existido: sai da resolução por
+    // data, senão a importação seguinte remarcaria tudo que o cancelamento
+    // acabou de desmarcar.
+    where: { vendedorId, canceladaEm: null },
     select: { id: true, dataInicio: true, dataFim: true },
     orderBy: { dataInicio: "asc" },
   });
@@ -291,7 +295,8 @@ export class CacheVendedores {
         orderBy: { vigenteDe: "asc" },
       }),
       this.db.vendedorRecuperacao.findMany({
-        where: { vendedorId: { in: faltantes } },
+        // Mesma exclusão de `carregarRecuperacoes`: cancelada não resolve.
+        where: { vendedorId: { in: faltantes }, canceladaEm: null },
         select: { id: true, vendedorId: true, dataInicio: true, dataFim: true },
         orderBy: { dataInicio: "asc" },
       }),
@@ -688,6 +693,161 @@ export async function registrarRecuperacao(
   });
 
   return { id: recuperacao.id, cotasMarcadas: marcadas.count };
+}
+
+export interface ResumoCancelamentoRecuperacao {
+  cotasDesmarcadas: number;
+  cotasRemarcadas: number;
+  estornosRemovidos: number;
+  estornosAtualizados: number;
+  valorLiberado: number;
+}
+
+/**
+ * Cancela uma recuperação registrada por engano.
+ *
+ * **Não é o mesmo que encerrar.** Encerrar diz que a recuperação acabou —
+ * aconteceu, e as vendas do período continuam sendo vendas feitas em
+ * recuperação. Cancelar diz que ela nunca deveria ter sido registrada: pessoa
+ * errada, datas erradas, lançamento indevido. Como o fato não existiu, o que
+ * ele produziu também não pode continuar de pé.
+ *
+ * O que se desfaz, em ordem:
+ *
+ * 1. O período sai de circulação. A linha permanece, com autor e motivo — quem
+ *    conferir daqui a um ano precisa ver que existiu e por que saiu.
+ * 2. As vendas que ELE marcou são desmarcadas. Só elas: venda marcada por
+ *    outro período continua marcada, porque aquele outro período continua
+ *    valendo.
+ * 3. Venda que caía em mais de um período é remarcada no que sobrou. Sem isso,
+ *    cancelar um registro errado apagaria por tabela uma recuperação legítima
+ *    que cobria os mesmos dias.
+ * 4. Os estornos das vendas afetadas são reavaliados. É o passo que não pode
+ *    faltar: desmarcar sem reavaliar deixaria a cobrança calculada sob a
+ *    premissa errada parada no sistema, e ela sairia no pagamento.
+ */
+export async function cancelarRecuperacao(
+  recuperacaoId: string,
+  motivo: string,
+  usuario: ContextoUsuario,
+): Promise<ResumoCancelamentoRecuperacao> {
+  const texto = motivo.trim();
+  if (!texto) {
+    throw new Error("Informe o motivo do cancelamento — ele fica na auditoria.");
+  }
+
+  const recuperacao = await prisma.vendedorRecuperacao.findUniqueOrThrow({
+    where: { id: recuperacaoId },
+    select: {
+      id: true,
+      vendedorId: true,
+      pessoaId: true,
+      dataInicio: true,
+      dataFim: true,
+      motivo: true,
+      canceladaEm: true,
+      vendedor: { select: { nome: true, cpfCnpj: true } },
+    },
+  });
+
+  if (recuperacao.canceladaEm) {
+    throw new Error("Esta recuperação já foi cancelada.");
+  }
+
+  const cotasMarcadas = await prisma.cota.findMany({
+    where: { recuperacaoId },
+    select: { id: true, dataVenda: true },
+  });
+
+  // Os outros períodos do mesmo documento, para saber quais vendas continuam
+  // em recuperação por outro motivo.
+  const remanescentes = recuperacao.vendedorId
+    ? await prisma.vendedorRecuperacao.findMany({
+        where: {
+          vendedorId: recuperacao.vendedorId,
+          id: { not: recuperacaoId },
+          canceladaEm: null,
+        },
+        select: { id: true, dataInicio: true, dataFim: true },
+        orderBy: { dataInicio: "asc" },
+      })
+    : [];
+
+  const remarcar = new Map<string, string[]>();
+  const desmarcar: string[] = [];
+
+  for (const cota of cotasMarcadas) {
+    const outro = cota.dataVenda
+      ? encontrarRecuperacaoNaData(remanescentes, cota.dataVenda)
+      : null;
+    if (outro) {
+      const lista = remarcar.get(outro.id) ?? [];
+      lista.push(cota.id);
+      remarcar.set(outro.id, lista);
+    } else {
+      desmarcar.push(cota.id);
+    }
+  }
+
+  await prisma.$transaction([
+    prisma.vendedorRecuperacao.update({
+      where: { id: recuperacaoId },
+      data: {
+        canceladaEm: new Date(),
+        canceladoPorId: usuario.id,
+        motivoCancelamento: texto,
+      },
+    }),
+    ...(desmarcar.length > 0
+      ? [
+          prisma.cota.updateMany({
+            where: { id: { in: desmarcar } },
+            data: { emRecuperacao: false, recuperacaoId: null, recuperacaoFixadaEm: null },
+          }),
+        ]
+      : []),
+    ...[...remarcar.entries()].map(([outroId, ids]) =>
+      prisma.cota.updateMany({
+        where: { id: { in: ids } },
+        data: { recuperacaoId: outroId },
+      }),
+    ),
+  ]);
+
+  const reavaliacao = await reavaliarEstornos(
+    desmarcar,
+    usuario,
+    "recuperação cancelada",
+  );
+
+  await registrarAuditoria({
+    acao: "RECUPERACAO",
+    entidade: "Pessoa",
+    entidadeId: recuperacao.pessoaId ?? recuperacaoId,
+    descricao:
+      `Recuperação de ${recuperacao.vendedor?.nome ?? "—"} ` +
+      `(${recuperacao.dataInicio.toISOString().slice(0, 10)} a ${recuperacao.dataFim.toISOString().slice(0, 10)}) ` +
+      `CANCELADA: ${texto}. ${desmarcar.length} venda(s) desmarcada(s), ` +
+      `${reavaliacao.estornosRemovidos} estorno(s) removido(s), ` +
+      `${reavaliacao.estornosAtualizados} recalculado(s).`,
+    dadosAntes: recuperacao,
+    dadosDepois: {
+      canceladaEm: new Date(),
+      motivoCancelamento: texto,
+      cotasDesmarcadas: desmarcar.length,
+      cotasRemarcadasEmOutroPeriodo: cotasMarcadas.length - desmarcar.length,
+      reavaliacao,
+    },
+    usuario,
+  });
+
+  return {
+    cotasDesmarcadas: desmarcar.length,
+    cotasRemarcadas: cotasMarcadas.length - desmarcar.length,
+    estornosRemovidos: reavaliacao.estornosRemovidos,
+    estornosAtualizados: reavaliacao.estornosAtualizados,
+    valorLiberado: reavaliacao.valorLiberado,
+  };
 }
 
 /**

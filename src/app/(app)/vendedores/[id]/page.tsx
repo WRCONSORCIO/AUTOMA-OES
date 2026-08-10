@@ -36,6 +36,7 @@ import { vendasForaDoDocumento } from "@/modules/comercial/infrastructure/querie
 import { carregarComissoesDaPessoa } from "@/server/services/comissao-equipe";
 import { PainelVendedor } from "./painel";
 import { BotaoSeparar } from "../../vinculos/formularios";
+import { LinhaRecuperacao } from "./cancelar-recuperacao";
 
 const TOM_CATEGORIA_DOC = {
   INICIANTE: "atencao",
@@ -126,6 +127,8 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
   const totalLiberado = comissoesEquipe.reduce((soma, linha) => soma + linha.liberado, 0);
 
   const podeEditar = podeAcessar(sessao.perfil, "vendedores", "editar");
+  // Cancelar recuperação desfaz estorno já calculado: exige mais que editar.
+  const podeExcluir = podeAcessar(sessao.perfil, "vendedores", "excluir");
   const historicoCategorias = vendedor.pessoa?.historicoCategorias ?? [];
   const recuperacoes = vendedor.pessoa?.recuperacoes ?? [];
   const semHistoricoCategoria = historicoCategorias.length === 0;
@@ -548,8 +551,9 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
         <CardHeader>
           <CardTitle>Períodos de recuperação</CardTitle>
           <p className="text-sm text-[var(--color-texto-2)]">
-            Toda venda realizada dentro do intervalo fica marcada permanentemente, mesmo depois
-            que a recuperação termina.
+            A recuperação termina sozinha na data de fim: vendas feitas depois dela já não são
+            marcadas. As de dentro do intervalo continuam marcadas para sempre — é um fato sobre
+            quando a venda aconteceu, e ele não muda depois.
           </p>
         </CardHeader>
         <CardContent className="p-0">
@@ -560,19 +564,34 @@ export default async function PaginaVendedor({ params }: { params: Promise<{ id:
                 <Th>Fim</Th>
                 <Th>Motivo</Th>
                 <Th>Registrado em</Th>
+                {podeExcluir ? <Th>Ações</Th> : null}
               </tr>
             </Cabecalho>
             <tbody>
               {recuperacoes.length === 0 ? (
-                <TabelaVazia colunas={4} mensagem="Nenhum período de recuperação registrado." />
+                <TabelaVazia
+                  colunas={podeExcluir ? 5 : 4}
+                  mensagem="Nenhum período de recuperação registrado."
+                />
               ) : (
                 recuperacoes.map((periodo) => (
-                  <Tr key={periodo.id}>
-                    <Td className="whitespace-nowrap">{formatarData(periodo.dataInicio)}</Td>
-                    <Td className="whitespace-nowrap">{formatarData(periodo.dataFim)}</Td>
-                    <Td>{periodo.motivo ?? "—"}</Td>
-                    <Td className="whitespace-nowrap">{formatarDataHora(periodo.criadoEm)}</Td>
-                  </Tr>
+                  <LinhaRecuperacao
+                    key={periodo.id}
+                    vendedorId={vendedor.id}
+                    podeCancelar={podeExcluir}
+                    colunas={podeExcluir ? 5 : 4}
+                    periodo={{
+                      id: periodo.id,
+                      inicio: formatarData(periodo.dataInicio),
+                      fim: formatarData(periodo.dataFim),
+                      motivo: periodo.motivo,
+                      registradoEm: formatarDataHora(periodo.criadoEm),
+                      canceladaEm: periodo.canceladaEm
+                        ? formatarData(periodo.canceladaEm)
+                        : null,
+                      motivoCancelamento: periodo.motivoCancelamento,
+                    }}
+                  />
                 ))
               )}
             </tbody>

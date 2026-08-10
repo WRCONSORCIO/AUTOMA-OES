@@ -216,6 +216,7 @@ model Usuario {
   backups               Backup[]
   categoriasRegistradas VendedorCategoriaHistorico[]
   recuperacoes          VendedorRecuperacao[]
+  recuperacoesCanceladas VendedorRecuperacao[] @relation("RecuperacaoCancelada")
   overridesCriados      CotaVendedorOverride[]
   overridesHistorico    CotaVendedorOverrideHistorico[]
   alocacoesRegistradas  VendedorAlocacaoHistorico[]
@@ -447,14 +448,24 @@ model VendedorRecuperacao {
   usuarioId   String?
   criadoEm    DateTime  @default(now())
 
-  pessoa   Pessoa?   @relation(fields: [pessoaId], references: [id])
-  vendedor Vendedor? @relation(fields: [vendedorId], references: [id])
-  usuario  Usuario?  @relation(fields: [usuarioId], references: [id])
-  cotas    Cota[]
+  /// Registro feito por engano. Diferente de `encerradaEm`, que marca a
+  /// recuperação que terminou de verdade: aqui o período não deveria ter
+  /// existido. A linha não é apagada — fica com o rastro de quem cancelou e
+  /// por quê, e passa a ser ignorada na resolução por data.
+  canceladaEm        DateTime?
+  canceladoPorId     String?
+  motivoCancelamento String?
+
+  pessoa      Pessoa?   @relation(fields: [pessoaId], references: [id])
+  vendedor    Vendedor? @relation(fields: [vendedorId], references: [id])
+  usuario     Usuario?  @relation(fields: [usuarioId], references: [id])
+  canceladoPor Usuario? @relation("RecuperacaoCancelada", fields: [canceladoPorId], references: [id])
+  cotas       Cota[]
 
   @@index([pessoaId, dataInicio, dataFim])
   @@index([vendedorId, dataInicio, dataFim])
   @@index([dataInicio, dataFim])
+  @@index([canceladaEm])
 }
 
 // ---------------------------------------------------------------------------
