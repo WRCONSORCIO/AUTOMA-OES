@@ -34,6 +34,17 @@ export function processarEventosPendentes(
 }
 
 /**
+ * Eventos por rodada da drenagem.
+ *
+ * Maior que o lote padrão do despachante de propósito. Uma importação de base
+ * inteira publica um evento por venda, e com 100 por rodada o teto de rodadas
+ * era atingido antes da fila esvaziar: numa medição real, 5.668 eventos
+ * gerados e 5.000 processados — os 668 restantes ficavam pendentes até o cron
+ * passar, e o resumo mostrado ao usuário saía sem eles.
+ */
+const LOTE_DA_DRENAGEM = 500;
+
+/**
  * Drena a fila até esvaziar, com teto de rodadas.
  *
  * Uma importação grande gera mais eventos do que cabe num lote, e devolver o
@@ -41,7 +52,10 @@ export function processarEventosPendentes(
  * mais. O teto existe para que um handler que sempre falha não segure o
  * processo indefinidamente — o que sobrar fica pendente e é recolhido depois.
  */
-export async function drenarEventos(maxRodadas = 50): Promise<ResumoDespacho> {
+export async function drenarEventos(
+  maxRodadas = 50,
+  lote = LOTE_DA_DRENAGEM,
+): Promise<ResumoDespacho> {
   let eventos = 0;
   let entregasOk = 0;
   let entregasIgnoradas = 0;
@@ -49,7 +63,7 @@ export async function drenarEventos(maxRodadas = 50): Promise<ResumoDespacho> {
   let eventosComFalha = 0;
 
   for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
-    const resumo = await processarEventosPendentes();
+    const resumo = await processarEventosPendentes({ lote });
     eventos += resumo.eventos;
     entregasOk += resumo.entregasOk;
     entregasIgnoradas += resumo.entregasIgnoradas;
