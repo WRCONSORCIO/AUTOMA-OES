@@ -1,25 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { remuneraSupervisaoEGerencia } from "@/server/domain/tabelas-internas";
+import {
+  remuneraSupervisaoEGerencia,
+  wrPagaComissaoDaVenda,
+} from "@/server/domain/tabelas-internas";
 
 /**
- * Supervisão e gerência saem do mesmo bolso que a comissão do iniciante — o da
- * WR. Venda de veterano ou expert é paga direto pela administradora, e não há
- * de onde tirar os outros dois papéis.
+ * A WR paga comissão sobre venda de INICIANTE e mais nada. Venda de veterano
+ * ou expert é paga direto pela administradora ao vendedor: não sai dinheiro da
+ * WR para ninguém — nem para ele, nem para a supervisão, nem para a gerência.
  */
-describe("quem tem supervisão e gerência", () => {
-  it("venda de iniciante remunera os três papéis", () => {
+describe("quem a WR paga por uma venda", () => {
+  it("venda de iniciante paga vendedor, supervisão e gerência", () => {
+    expect(wrPagaComissaoDaVenda("INICIANTE")).toBe(true);
     expect(remuneraSupervisaoEGerencia("INICIANTE")).toBe(true);
   });
 
-  it("veterano e expert remuneram só o vendedor", () => {
-    expect(remuneraSupervisaoEGerencia("VETERANO")).toBe(false);
-    expect(remuneraSupervisaoEGerencia("EXPERT")).toBe(false);
+  it("veterano e expert não pagam NINGUÉM — nem o próprio vendedor", () => {
+    for (const categoria of ["VETERANO", "EXPERT"]) {
+      expect(wrPagaComissaoDaVenda(categoria)).toBe(false);
+      expect(remuneraSupervisaoEGerencia(categoria)).toBe(false);
+    }
   });
 
-  it("venda sem categoria não remunera ninguém", () => {
+  it("venda sem categoria não paga ninguém", () => {
     // Sem saber sob qual condição a venda foi feita, pagar seria pagar por
     // suposição — e o erro sairia na folha de alguém.
-    expect(remuneraSupervisaoEGerencia(null)).toBe(false);
-    expect(remuneraSupervisaoEGerencia(undefined)).toBe(false);
+    expect(wrPagaComissaoDaVenda(null)).toBe(false);
+    expect(wrPagaComissaoDaVenda(undefined)).toBe(false);
   });
 });

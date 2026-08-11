@@ -185,11 +185,17 @@ export default async function PaginaComissoesEquipe({
           icone={<HandCoins className="h-4 w-4" />}
         />
         <Indicador
-          rotulo="Parcelas sem pagamento"
+          rotulo="Parcelas que não pagam"
           valor={formatarNumero(
-            aPagar.semPagamento.parcelaNaoRemunerada + aPagar.semPagamento.semCota,
+            aPagar.semPagamento.parcelaNaoRemunerada +
+              aPagar.semPagamento.categoriaNaoPaga +
+              aPagar.semPagamento.semCota,
           )}
-          detalhe={`${formatarNumero(aPagar.semPagamento.parcelaNaoRemunerada)} fora das parcelas que pagam · ${formatarNumero(aPagar.semPagamento.semCota)} sem vendedor ou categoria`}
+          detalhe={
+            `${formatarNumero(aPagar.semPagamento.parcelaNaoRemunerada)} em parcela que a tabela do vendedor não paga · ` +
+            `${formatarNumero(aPagar.semPagamento.categoriaNaoPaga)} de veterano/expert · ` +
+            `${formatarNumero(aPagar.semPagamento.semCota)} sem vendedor ou categoria`
+          }
           tom={aPagar.semPagamento.semCota > 0 ? "atencao" : "neutro"}
         />
       </div>
