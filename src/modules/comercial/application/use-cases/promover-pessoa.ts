@@ -73,15 +73,27 @@ export async function promoverPessoa(
     where: { cpfCnpj: documento },
     select: { id: true, nome: true, pessoaId: true },
   });
-  if (emUso) {
+
+  // CNPJ de outra pessoa continua sendo erro. O da própria pessoa não é:
+  //
+  // A promoção quase nunca é registrada aqui antes de acontecer no mundo. O
+  // vendedor abre o CNPJ, vende por ele, e a importação da base cria o
+  // cadastro sozinha — quando alguém vem registrar a promoção, o documento já
+  // está lá. Exigir um CNPJ "novo" nesse caso é exigir um que não existe, e
+  // era o que travava: a pessoa já era expert, com vendas no CPF e no CNPJ, e
+  // não havia como dizer isso ao sistema.
+  //
+  // Promover um documento existente é a mesma promoção: o que muda é abrir
+  // período de categoria em vez de criar linha.
+  if (emUso && emUso.pessoaId !== pessoa.id) {
     return falhaDominio(
       "DOCUMENTO_EM_USO",
-      `Este CNPJ já está cadastrado para ${emUso.nome}.` +
-        (emUso.pessoaId === pessoa.id
-          ? " Ele já pertence a esta pessoa."
-          : " Se for a mesma pessoa, use a tela de vínculos antes de promover."),
+      `Este CNPJ já está cadastrado para ${emUso.nome}, que é outra pessoa. ` +
+        "Se for a mesma, junte os documentos na tela de vínculos antes de promover.",
     );
   }
+
+  const documentoExistente = emUso ?? null;
 
   const documentos: DocumentoDaPessoa[] = pessoa.documentos.map((doc) => ({
     id: doc.id,
@@ -110,24 +122,50 @@ export async function promoverPessoa(
     null;
 
   const criado = await prisma.$transaction(async (tx) => {
-    const novo = await tx.vendedor.create({
-      data: {
-        nome: entrada.nomeNovo?.trim() || pessoa.nome,
-        cpfCnpj: documentoNovo.cpfCnpj,
-        cpfCnpjFormatado: formatarDocumento(documentoNovo.cpfCnpj),
-        tipoDocumento: "CNPJ",
-        categoriaAtual: documentoNovo.categoria,
-        pessoaId: pessoa.id,
-        equipeId: referencia?.equipeId ?? null,
-        gerenciaId: referencia?.gerenciaId ?? null,
-        dataEntradaWr: documentoNovo.vigenteDe,
-        situacao: "ATIVO",
-        observacoes: documentoNovo.vende
-          ? null
-          : "Documento de expert: não recebe venda. É a identidade pela qual a pessoa recebe supervisão.",
-      },
-      select: { id: true, nome: true },
-    });
+    const novo = documentoExistente
+      ? // Documento que já existe: só passa a valer na categoria nova. Nome,
+        // equipe e gerência ficam como estão — quem já vendia por ele tem
+        // história própria, e sobrescrever apagaria a alocação real.
+        await tx.vendedor.update({
+          where: { id: documentoExistente.id },
+          data: { categoriaAtual: documentoNovo.categoria },
+          select: { id: true, nome: true },
+        })
+      : await tx.vendedor.create({
+          data: {
+            nome: entrada.nomeNovo?.trim() || pessoa.nome,
+            cpfCnpj: documentoNovo.cpfCnpj,
+            cpfCnpjFormatado: formatarDocumento(documentoNovo.cpfCnpj),
+            tipoDocumento: "CNPJ",
+            categoriaAtual: documentoNovo.categoria,
+            pessoaId: pessoa.id,
+            equipeId: referencia?.equipeId ?? null,
+            gerenciaId: referencia?.gerenciaId ?? null,
+            dataEntradaWr: documentoNovo.vigenteDe,
+            situacao: "ATIVO",
+            observacoes: documentoNovo.vende
+              ? null
+              : "Documento de expert: não recebe venda. É a identidade pela qual a pessoa recebe supervisão.",
+          },
+          select: { id: true, nome: true },
+        });
+
+    // Período anterior aberto precisa fechar na véspera: dois períodos abertos
+    // fariam a categoria da venda depender da ordem de leitura.
+    if (documentoExistente) {
+      const aberto = await tx.vendedorCategoriaHistorico.findFirst({
+        where: { vendedorId: novo.id, vigenteAte: null },
+        orderBy: { vigenteDe: "desc" },
+      });
+      if (aberto) {
+        const vespera = new Date(documentoNovo.vigenteDe);
+        vespera.setUTCDate(vespera.getUTCDate() - 1);
+        await tx.vendedorCategoriaHistorico.update({
+          where: { id: aberto.id },
+          data: { vigenteAte: vespera },
+        });
+      }
+    }
 
     // Período próprio de categoria. Sem isso o documento novo resolveria
     // categoria nula e suas vendas não gerariam comissão.
@@ -142,29 +180,33 @@ export async function promoverPessoa(
       },
     });
 
-    await tx.vendedorAlocacaoHistorico.create({
-      data: {
-        vendedorId: novo.id,
-        equipeId: referencia?.equipeId ?? null,
-        gerenciaId: referencia?.gerenciaId ?? null,
-        vigenteDe: documentoNovo.vigenteDe,
-        motivo: "Alocação herdada na promoção",
-        usuarioId: usuario.id,
-      },
-    });
+    // Alocação e vínculo só para documento que nasce agora. O que já existia
+    // tem os dois, e recriá-los inventaria uma movimentação que não houve.
+    if (!documentoExistente) {
+      await tx.vendedorAlocacaoHistorico.create({
+        data: {
+          vendedorId: novo.id,
+          equipeId: referencia?.equipeId ?? null,
+          gerenciaId: referencia?.gerenciaId ?? null,
+          vigenteDe: documentoNovo.vigenteDe,
+          motivo: "Alocação herdada na promoção",
+          usuarioId: usuario.id,
+        },
+      });
 
-    await tx.pessoaVinculoHistorico.create({
-      data: {
-        pessoaId: pessoa.id,
-        vendedorId: novo.id,
-        vendedorNome: novo.nome,
-        vendedorDocumento: documentoNovo.cpfCnpj,
-        acao: "VINCULO",
-        motivo: `Documento aberto pela promoção a ${documentoNovo.categoria}`,
-        usuarioId: usuario.id,
-        usuarioNome: usuario.nome,
-      },
-    });
+      await tx.pessoaVinculoHistorico.create({
+        data: {
+          pessoaId: pessoa.id,
+          vendedorId: novo.id,
+          vendedorNome: novo.nome,
+          vendedorDocumento: documentoNovo.cpfCnpj,
+          acao: "VINCULO",
+          motivo: `Documento aberto pela promoção a ${documentoNovo.categoria}`,
+          usuarioId: usuario.id,
+          usuarioNome: usuario.nome,
+        },
+      });
+    }
 
     if (encerrarParaVenda) {
       // Marca que não entra venda NOVA. Não mexe em `situacao`, não mexe em
