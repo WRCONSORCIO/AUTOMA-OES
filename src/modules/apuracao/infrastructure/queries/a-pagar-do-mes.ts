@@ -3,8 +3,8 @@ import type { DestinoComissao, PapelComissao } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calcularBaseComissao } from "@/server/domain/regras";
 import {
-  remuneraSupervisaoEGerencia,
   resolverTabelaInterna,
+  wrPagaComissaoDaVenda,
   type TabelaInterna,
 } from "@/server/domain/tabelas-internas";
 import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
@@ -84,6 +84,8 @@ export interface ResumoAPagar {
     semCota: number;
     semTabela: number;
     parcelaNaoRemunerada: number;
+    /** Venda de veterano ou expert: a WR não paga ninguém por ela. */
+    categoriaNaoPaga: number;
   };
 }
 
@@ -147,7 +149,7 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
   ]);
 
   const acumulado = new Map<string, Acumulador>();
-  const semPagamento = { semCota: 0, semTabela: 0, parcelaNaoRemunerada: 0 };
+  const semPagamento = { semCota: 0, semTabela: 0, parcelaNaoRemunerada: 0, categoriaNaoPaga: 0 };
   let total = 0;
   let parcelasPagas = 0;
 
@@ -178,6 +180,14 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
     const equipeNome = cota?.equipe?.nome ?? lancamento.equipe?.nome ?? null;
     const gerenciaNome = cota?.gerencia?.nome ?? lancamento.gerencia?.nome ?? null;
 
+    // Venda de veterano ou expert não paga NINGUÉM: nem o vendedor, que
+    // recebe direto da administradora, nem supervisão, nem gerência. A WR não
+    // desembolsa nada por ela, e esta tela é a da folha da WR.
+    if (!wrPagaComissaoDaVenda(categoria)) {
+      semPagamento.categoriaNaoPaga += 1;
+      continue;
+    }
+
     const alvos: {
       papel: PapelComissao;
       destino: DestinoComissao;
@@ -193,11 +203,7 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
         beneficiario: nomeVendedor,
       });
     }
-    // Supervisão e gerência só entram sobre venda de iniciante: é a única que
-    // a WR paga, e é dela que sai o dinheiro dos três papéis.
-    const temSupervisaoEGerencia = remuneraSupervisaoEGerencia(categoria);
-
-    if (temSupervisaoEGerencia && equipeId && equipeNome && equipeNome !== gerenciaNome) {
+    if (equipeId && equipeNome && equipeNome !== gerenciaNome) {
       alvos.push({
         papel: "SUPERVISOR",
         destino: "SUPERVISOR",
@@ -205,7 +211,7 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
         beneficiario: equipeNome,
       });
     }
-    if (temSupervisaoEGerencia && gerenciaId && gerenciaNome) {
+    if (gerenciaId && gerenciaNome) {
       alvos.push({
         papel: "GERENCIA",
         destino: "GERENCIA",

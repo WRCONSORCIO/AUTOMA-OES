@@ -123,20 +123,37 @@ export const DESTINOS_PAGOS_PELA_WR: readonly DestinoComissao[] = [
 ];
 
 /**
- * Supervisão e gerência só são pagas sobre venda de INICIANTE.
+ * A WR paga alguém por esta venda?
  *
- * Decorre de quem paga a venda. A comissão de iniciante sai do bolso da WR, e
- * é dela que saem também a supervisão e a gerência daquela venda. Veterano e
- * expert recebem direto da administradora — a WR não desembolsa nada, e não
- * há de onde tirar supervisão nem gerência.
+ * **Só venda de INICIANTE.** Não é só a supervisão e a gerência que ficam de
+ * fora quando a venda é de veterano ou expert — o vendedor também. Nessas, a
+ * administradora paga direto a ele, e a WR não desembolsa nada para ninguém.
+ *
+ * As tabelas de veterano e expert continuam existindo, e não é contradição:
+ * elas dizem quanto ele recebeu da administradora, que é a base do estorno
+ * quando a venda cai. Calcular não é pagar.
  *
  * Venda sem categoria congelada não remunera ninguém: sem saber sob qual
  * condição foi feita, pagar seria pagar por suposição.
  */
-export function remuneraSupervisaoEGerencia(
+export function wrPagaComissaoDaVenda(
   categoriaVenda: string | null | undefined,
 ): boolean {
   return categoriaVenda === "INICIANTE";
+}
+
+/**
+ * Supervisão e gerência só existem sobre venda de iniciante.
+ *
+ * Mesma condição de `wrPagaComissaoDaVenda`, com nome próprio porque o uso é
+ * outro: na apuração da carteira o VENDEDOR é calculado em toda categoria —
+ * é a base do estorno —, mas supervisão e gerência não, porque não há estorno
+ * delas nem pagamento.
+ */
+export function remuneraSupervisaoEGerencia(
+  categoriaVenda: string | null | undefined,
+): boolean {
+  return wrPagaComissaoDaVenda(categoriaVenda);
 }
 
 export function wrPaga(destino: DestinoComissao): boolean {
