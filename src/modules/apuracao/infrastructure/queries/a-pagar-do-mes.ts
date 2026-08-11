@@ -38,6 +38,11 @@ export interface FiltroAPagar {
   gerenciaId?: string;
   equipeId?: string;
   papel?: PapelComissao;
+  /**
+   * Quando informado, o resumo traz também a lista de parcelas deste
+   * beneficiário — quais clientes estão sendo pagos, e por qual parcela.
+   */
+  detalharChave?: string;
 }
 
 export interface LinhaAPagar {
@@ -52,8 +57,26 @@ export interface LinhaAPagar {
   valor: number;
 }
 
+/** Uma parcela específica que entra no pagamento de um beneficiário. */
+export interface ItemAPagar {
+  cotaId: string | null;
+  cliente: string;
+  contrato: string;
+  grupo: string;
+  cota: string;
+  parcela: number;
+  dataReferencia: Date;
+  credito: number;
+  base: number;
+  percentual: number;
+  valor: number;
+}
+
 export interface ResumoAPagar {
   linhas: LinhaAPagar[];
+  /** Parcelas do beneficiário pedido em `detalharChave`. */
+  detalhe: ItemAPagar[];
+  detalheDe: string | null;
   total: number;
   parcelas: number;
   /** Linhas do relatório que não geraram pagamento, e por quê. */
@@ -71,6 +94,7 @@ interface Acumulador {
   cotas: Set<string>;
   base: number;
   valor: number;
+  itens: ItemAPagar[];
 }
 
 export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
@@ -89,6 +113,11 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
       select: {
         cotaId: true,
         parcela: true,
+        dataReferencia: true,
+        contrato: true,
+        grupo: true,
+        cota: true,
+        nomeCliente: true,
         valorCredito: true,
         percentualFlex: true,
         categoriaVenda: true,
@@ -211,7 +240,27 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
           cotas: new Set<string>(),
           base: 0,
           valor: 0,
+          itens: [] as ItemAPagar[],
         };
+
+      // Guarda o detalhe só de quem foi pedido: a lista inteira de um
+      // fechamento tem milhares de linhas, e carregar todas para mostrar uma
+      // seria pagar caro por nada.
+      if (filtro.detalharChave === alvo.chave) {
+        atual.itens.push({
+          cotaId: lancamento.cotaId,
+          cliente: lancamento.nomeCliente,
+          contrato: lancamento.contrato,
+          grupo: lancamento.grupo,
+          cota: lancamento.cota,
+          parcela: lancamento.parcela,
+          dataReferencia: lancamento.dataReferencia,
+          credito: Number(lancamento.valorCredito ?? 0),
+          base,
+          percentual: base > 0 ? arredondar4((valor / base) * 100) : 0,
+          valor,
+        });
+      }
 
       atual.parcelas += 1;
       if (lancamento.cotaId) atual.cotas.add(lancamento.cotaId);
@@ -239,8 +288,18 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
     }))
     .sort((a, b) => b.valor - a.valor);
 
+  const detalhe = filtro.detalharChave
+    ? (acumulado.get(filtro.detalharChave)?.itens ?? []).sort(
+        (a, b) => b.valor - a.valor,
+      )
+    : [];
+
   return {
     linhas,
+    detalhe,
+    detalheDe: filtro.detalharChave
+      ? (acumulado.get(filtro.detalharChave)?.beneficiario ?? null)
+      : null,
     total: arredondar(total),
     parcelas: parcelasPagas,
     semPagamento,
@@ -274,4 +333,8 @@ function valorDaParcela(
 
 function arredondar(valor: number): number {
   return Math.round(valor * 100) / 100;
+}
+
+function arredondar4(valor: number): number {
+  return Math.round(valor * 10000) / 10000;
 }
