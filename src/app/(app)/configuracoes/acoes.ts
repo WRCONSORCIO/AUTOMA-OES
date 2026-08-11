@@ -7,6 +7,7 @@ import { parseValorBr } from "@/lib/normalize";
 import { formatarNumero } from "@/lib/format";
 import { PARCELAS_CONFIGURAVEIS } from "./constantes";
 import {
+  ajustarVigenciaParaCobrirBase,
   salvarTabelaInterna,
   semearTabelasInternas,
 } from "@/server/services/tabelas-internas";
@@ -90,5 +91,39 @@ export async function acaoSemear(
       `${formatarNumero(resumo.tabelasCriadas)} tabela(s) e ` +
       `${formatarNumero(resumo.flexCriadas)} modalidade(s) de flex criadas. ` +
       "O que já existia foi preservado.",
+  };
+}
+
+/**
+ * Faz os percentuais já cadastrados alcançarem as vendas já importadas.
+ *
+ * A tela não pede data de vigência, e é bom que não peça: no uso normal os
+ * percentuais valem "desde sempre" e mudá-los abre um período novo. Mas quem
+ * cadastrou quando a criação usava a data de hoje ficou com tabelas que não
+ * alcançam venda nenhuma, e sem esta ação não havia como corrigir pela
+ * interface — só por dentro do banco.
+ */
+export async function acaoAjustarVigencia(
+  _anterior: EstadoAcao,
+  _formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  const resumo = await ajustarVigenciaParaCobrirBase({ id: sessao.id, nome: sessao.nome });
+
+  revalidatePath("/configuracoes");
+  revalidatePath("/comissoes-equipe");
+
+  if (resumo.ajustadas === 0) {
+    return {
+      sucesso: "Nenhuma tabela precisava de ajuste — todas já alcançam as vendas importadas.",
+    };
+  }
+
+  return {
+    sucesso:
+      `${formatarNumero(resumo.ajustadas)} tabela(s) passaram a valer desde ` +
+      `${resumo.inicio.toLocaleDateString("pt-BR", { timeZone: "UTC" })}, que é a venda mais ` +
+      "antiga da base. Nenhum percentual foi alterado — agora apure as comissões.",
   };
 }

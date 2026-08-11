@@ -1,10 +1,10 @@
 "use client";
 
 import { useActionState } from "react";
-import { Sparkles } from "lucide-react";
+import { CalendarClock, Sparkles } from "lucide-react";
 import { Badge, Entrada } from "@/components/ui";
 import { BotaoAcao, MensagemAcao, type EstadoAcao } from "@/components/formulario-acao";
-import { acaoSalvarTabela, acaoSemear } from "./acoes";
+import { acaoAjustarVigencia, acaoSalvarTabela, acaoSemear } from "./acoes";
 import { PARCELAS_CONFIGURAVEIS } from "./constantes";
 
 const PARCELAS = Array.from({ length: PARCELAS_CONFIGURAVEIS }, (_, i) => i + 1);
@@ -16,6 +16,10 @@ export interface TabelaEditavel {
   segmentoRotulo: string;
   pago: boolean;
   faixas: { parcela: number; percentual: string }[];
+  /** Desde quando estes percentuais valem. Vazio = tabela ainda não criada. */
+  vigenteDe: string | null;
+  /** A vigência começa depois de vendas que já estão na base. */
+  atrasada: boolean;
 }
 
 /**
@@ -44,6 +48,17 @@ export function EditorTabela({ tabela }: { tabela: TabelaEditavel }) {
         <Badge tom={tabela.pago ? "bom" : "neutro"}>
           {tabela.pago ? "A WR paga" : "Só para estorno"}
         </Badge>
+        {/*
+          A vigência era invisível na tela, e é ela que decide se o percentual
+          alcança as vendas já importadas. Percentual certo com vigência
+          recente calcula zero, e não havia nada aqui que explicasse.
+        */}
+        {tabela.vigenteDe ? (
+          <Badge tom={tabela.atrasada ? "critico" : "neutro"}>
+            {tabela.atrasada ? "Só vale desde " : "Vale desde "}
+            {tabela.vigenteDe}
+          </Badge>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
@@ -68,6 +83,29 @@ export function EditorTabela({ tabela }: { tabela: TabelaEditavel }) {
         </span>
         <MensagemAcao estado={estado} />
       </div>
+    </form>
+  );
+}
+
+/**
+ * Recua a vigência dos percentuais até a venda mais antiga.
+ *
+ * Fica ao lado da carga inicial porque é o mesmo momento da vida do sistema:
+ * acabou de configurar, e precisa que valha para o que já entrou.
+ */
+export function BotaoAjustarVigencia() {
+  const [estado, despachar] = useActionState<EstadoAcao, FormData>(acaoAjustarVigencia, {});
+
+  return (
+    <form action={despachar} className="flex flex-wrap items-center gap-3">
+      <BotaoAcao variante="secundario">
+        <CalendarClock className="h-4 w-4" />
+        Aplicar às vendas já importadas
+      </BotaoAcao>
+      <span className="max-w-md text-xs text-[var(--color-texto-3)]">
+        Recua a vigência até a venda mais antiga da base. Não altera nenhum percentual.
+      </span>
+      <MensagemAcao estado={estado} />
     </form>
   );
 }
