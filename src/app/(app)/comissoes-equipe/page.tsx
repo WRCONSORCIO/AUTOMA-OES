@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { HandCoins, Hourglass, Wallet } from "lucide-react";
 import { exigirPermissao } from "@/server/auth/session";
@@ -7,7 +8,7 @@ import { parseDataBr } from "@/lib/normalize";
 import { formatarMoeda, formatarNumero, formatarPercentual,
   formatarData,
 } from "@/lib/format";
-import { periodoPadrao, texto, type ParametrosBusca } from "@/lib/filtros";
+import { montarQuery, periodoPadrao, texto, type ParametrosBusca } from "@/lib/filtros";
 import {
   Aviso,
   Badge,
@@ -85,6 +86,7 @@ export default async function PaginaComissoesEquipe({
       gerenciaId: escopo.gerenciaId ?? parametros.gerencia,
       equipeId: escopo.equipeId ?? parametros.equipe,
       papel: papel ? (papel as "VENDEDOR") : undefined,
+      detalharChave: brutos.beneficiario ? String(brutos.beneficiario) : undefined,
     }),
     carregarTabelasInternas(),
     lacunasDeTabela(),
@@ -156,7 +158,7 @@ export default async function PaginaComissoesEquipe({
         </Aviso>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         <Indicador
           rotulo="A pagar no período"
           valor={formatarMoeda(aPagar.total)}
@@ -181,12 +183,6 @@ export default async function PaginaComissoesEquipe({
               .reduce((soma, linha) => soma + linha.valor, 0),
           )}`}
           icone={<HandCoins className="h-4 w-4" />}
-        />
-        <Indicador
-          rotulo="Projeção da carteira"
-          valor={formatarMoeda(painel.totais.previsto)}
-          detalhe="Total que as vendas do período renderão ao longo do plano — não é folha"
-          icone={<Hourglass className="h-4 w-4" />}
         />
         <Indicador
           rotulo="Parcelas sem pagamento"
@@ -274,7 +270,17 @@ export default async function PaginaComissoesEquipe({
               ) : (
                 aPagar.linhas.map((linha) => (
                   <Tr key={linha.chave}>
-                    <Td className="font-medium">{linha.beneficiario}</Td>
+                    <Td className="font-medium">
+                      <Link
+                        href={`/comissoes-equipe${montarQuery(brutos, {
+                          beneficiario:
+                            brutos.beneficiario === linha.chave ? undefined : linha.chave,
+                        })}`}
+                        className="text-[var(--color-marca-forte)] hover:underline"
+                      >
+                        {linha.beneficiario}
+                      </Link>
+                    </Td>
                     <Td>
                       <Badge tom={TOM_PAPEL[linha.papel]}>{ROTULO_PAPEL[linha.papel]}</Badge>
                     </Td>
@@ -291,6 +297,69 @@ export default async function PaginaComissoesEquipe({
           </Tabela>
         </CardContent>
       </Card>
+
+      {aPagar.detalheDe ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Clientes que estão pagando {aPagar.detalheDe}</CardTitle>
+            <p className="text-sm text-[var(--color-texto-2)]">
+              Uma linha por parcela recebida no período. É a conferência do valor: quem paga a
+              comissão é o cliente, e aqui está cada um deles com a parcela que entrou.
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Tabela>
+              <Cabecalho>
+                <tr>
+                  <Th>Cliente</Th>
+                  <Th>Contrato</Th>
+                  <Th>Grupo / Cota</Th>
+                  <Th className="text-right">Parcela</Th>
+                  <Th className="text-right">Crédito</Th>
+                  <Th className="text-right">Base</Th>
+                  <Th className="text-right">%</Th>
+                  <Th className="text-right">A pagar</Th>
+                </tr>
+              </Cabecalho>
+              <tbody>
+                {aPagar.detalhe.length === 0 ? (
+                  <TabelaVazia colunas={8} mensagem="Nenhuma parcela no período." />
+                ) : (
+                  aPagar.detalhe.map((item, indice) => (
+                    <Tr key={`${item.cotaId ?? item.contrato}-${item.parcela}-${indice}`}>
+                      <Td className="font-medium">
+                        {item.cotaId ? (
+                          <Link
+                            href={`/clientes/${item.cotaId}`}
+                            className="text-[var(--color-marca-forte)] hover:underline"
+                          >
+                            {item.cliente}
+                          </Link>
+                        ) : (
+                          item.cliente
+                        )}
+                      </Td>
+                      <Td className="numerico">{item.contrato}</Td>
+                      <Td className="numerico whitespace-nowrap">
+                        {item.grupo} / {item.cota}
+                      </Td>
+                      <Td className="numerico text-right">{item.parcela}</Td>
+                      <Td className="numerico text-right">{formatarMoeda(item.credito)}</Td>
+                      <Td className="numerico text-right">{formatarMoeda(item.base)}</Td>
+                      <Td className="numerico text-right">
+                        {formatarPercentual(item.percentual)}
+                      </Td>
+                      <Td className="numerico text-right font-medium text-[var(--color-bom)]">
+                        {formatarMoeda(item.valor)}
+                      </Td>
+                    </Tr>
+                  ))
+                )}
+              </tbody>
+            </Tabela>
+          </CardContent>
+        </Card>
+      ) : null}
     </>
   );
 }
