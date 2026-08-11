@@ -85,7 +85,7 @@ export function Promover({
       </Aviso>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Campo rotulo="CNPJ a abrir" dica="Somente números ou com máscara.">
+        <Campo rotulo="CNPJ do documento" dica="Pode ser um CNPJ novo ou um que a pessoa já tenha: se já existir, ele passa a valer na categoria nova em vez de ser criado.">
           <Entrada name="cpfCnpjNovo" inputMode="numeric" placeholder="00.000.000/0001-00" required />
         </Campo>
         <Campo rotulo="Vale a partir de" dica="Vendas anteriores continuam como estão.">

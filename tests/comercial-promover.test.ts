@@ -128,18 +128,45 @@ describe("o que a promoção recusa", () => {
     if (!plano.ok) expect(plano.erro.codigo).toBe("DEGRAU_JA_ALCANCADO");
   });
 
-  it("recusa documento que já é da própria pessoa, e aponta o caminho certo", () => {
+  it("ACEITA promover um documento que a pessoa já tem", () => {
+    // É o caso mais comum na prática: o vendedor abre o CNPJ, vende por ele, e
+    // a importação da base cria o cadastro antes de alguém registrar a
+    // promoção. Exigir um CNPJ "novo" seria exigir um que não existe.
+    const iniciante = { ...cnpjVeterano, categoriaAtual: "INICIANTE" as const };
     const plano = planejarPromocao({
-      documentos: [cpf, cnpjVeterano],
-      categoriaAlvo: "EXPERT",
-      cpfCnpjNovo: cnpjVeterano.cpfCnpj,
+      documentos: [cpf, iniciante],
+      categoriaAlvo: "VETERANO",
+      cpfCnpjNovo: iniciante.cpfCnpj,
       vigenteDe: dia("2025-06-01"),
     });
-    expect(plano.ok).toBe(false);
-    if (!plano.ok) {
-      expect(plano.erro.codigo).toBe("DOCUMENTO_JA_VINCULADO");
-      expect(plano.erro.mensagem).toMatch(/alteração de categoria/i);
+
+    expect(plano.ok).toBe(true);
+    if (plano.ok) {
+      expect(plano.valor.documentoNovo.cpfCnpj).toBe(iniciante.cpfCnpj);
+      expect(plano.valor.documentoNovo.categoria).toBe("VETERANO");
+      // O CPF para de receber venda nova, como em qualquer promoção a veterano.
+      expect(plano.valor.encerrarParaVenda?.vendedorId).toBe(cpf.id);
     }
+  });
+
+  it("promover documento existente não esbarra no limite de documentos", () => {
+    // O limite vale para quem ACRESCENTA documento. Promover o que já está lá
+    // não acrescenta nada — e era o limite que travava a pessoa com CPF e dois
+    // CNPJs querendo corrigir a categoria de um deles.
+    const segundoCnpj = {
+      ...cnpjVeterano,
+      id: "doc-3",
+      cpfCnpj: "11222333000144",
+      categoriaAtual: "INICIANTE" as const,
+    };
+    const plano = planejarPromocao({
+      documentos: [cpf, cnpjVeterano, segundoCnpj],
+      categoriaAlvo: "EXPERT",
+      cpfCnpjNovo: segundoCnpj.cpfCnpj,
+      vigenteDe: dia("2025-06-01"),
+    });
+
+    expect(plano.ok).toBe(true);
   });
 
   it("aceita CNPJ com máscara", () => {

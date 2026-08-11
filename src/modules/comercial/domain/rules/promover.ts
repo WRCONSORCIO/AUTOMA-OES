@@ -75,17 +75,21 @@ export function planejarPromocao(
     );
   }
 
-  const limite = podeAcrescentarDocumento(entrada.documentos, "CNPJ");
-  if (!limite.ok) return limite;
-
   const jaExiste = entrada.documentos.some(
     (doc) => doc.cpfCnpj.replace(/\D/g, "") === entrada.cpfCnpjNovo.replace(/\D/g, ""),
   );
-  if (jaExiste) {
-    return falhaDominio(
-      "DOCUMENTO_JA_VINCULADO",
-      "Este documento já pertence à pessoa. Para mudar a categoria dele, use a alteração de categoria — promover abre um documento novo.",
-    );
+
+  // Promover um documento que a pessoa já tem é caso legítimo, e o mais comum
+  // de todos: o vendedor abre o CNPJ e vende por ele antes de alguém registrar
+  // a promoção aqui, e a importação da base cria o cadastro sozinha. Quando o
+  // registro finalmente é feito, exigir um CNPJ "novo" é exigir um que não
+  // existe — era o que travava quem já era veterano ou expert na prática.
+  //
+  // O limite de documentos só vale quando um documento é acrescentado. Promover
+  // o que já está lá não acrescenta nada.
+  if (!jaExiste) {
+    const limite = podeAcrescentarDocumento(entrada.documentos, "CNPJ");
+    if (!limite.ok) return limite;
   }
 
   const jaTemCategoria = entrada.documentos.some(

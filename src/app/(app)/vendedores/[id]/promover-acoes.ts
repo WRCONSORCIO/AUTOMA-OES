@@ -38,7 +38,7 @@ export async function acaoPromover(
   if (categoriaAlvo !== "VETERANO" && categoriaAlvo !== "EXPERT") {
     return { erro: "Degrau inválido." };
   }
-  if (!cpfCnpjNovo) return { erro: "Informe o CNPJ que será aberto." };
+  if (!cpfCnpjNovo) return { erro: "Informe o CNPJ do documento que vai operar na nova categoria." };
   if (!vigenteDe) return { erro: "Informe a data em que a promoção passa a valer." };
 
   const resultado = await promoverPessoa(
