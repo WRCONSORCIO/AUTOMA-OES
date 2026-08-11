@@ -3,6 +3,7 @@ import type { DestinoComissao, PapelComissao } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calcularBaseComissao } from "@/server/domain/regras";
 import {
+  remuneraSupervisaoEGerencia,
   resolverTabelaInterna,
   type TabelaInterna,
 } from "@/server/domain/tabelas-internas";
@@ -163,7 +164,11 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
         beneficiario: nomeVendedor,
       });
     }
-    if (equipeId && equipeNome && equipeNome !== gerenciaNome) {
+    // Supervisão e gerência só entram sobre venda de iniciante: é a única que
+    // a WR paga, e é dela que sai o dinheiro dos três papéis.
+    const temSupervisaoEGerencia = remuneraSupervisaoEGerencia(categoria);
+
+    if (temSupervisaoEGerencia && equipeId && equipeNome && equipeNome !== gerenciaNome) {
       alvos.push({
         papel: "SUPERVISOR",
         destino: "SUPERVISOR",
@@ -171,7 +176,7 @@ export async function aPagarDoMes(filtro: FiltroAPagar): Promise<ResumoAPagar> {
         beneficiario: equipeNome,
       });
     }
-    if (gerenciaId && gerenciaNome) {
+    if (temSupervisaoEGerencia && gerenciaId && gerenciaNome) {
       alvos.push({
         papel: "GERENCIA",
         destino: "GERENCIA",

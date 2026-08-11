@@ -12,6 +12,7 @@ import { normalizarTexto } from "@/lib/normalize";
 import { type ContextoVenda } from "@/server/domain/comissao-equipe";
 import {
   apurarVendaPorParcelas,
+  remuneraSupervisaoEGerencia,
   resolverTabelaInterna,
   ROTULO_DESTINO,
   ROTULO_SEGMENTO,
@@ -128,7 +129,7 @@ export async function apurarComissoesEquipe(options?: {
       const parcelasRecebidas = recebidas.get(cota.id) ?? 0;
       let rendeuAlgo = false;
 
-      for (const { papel, destinoTabela } of papeisDaVenda(contexto)) {
+      for (const { papel, destinoTabela } of papeisDaVenda(contexto, categoria)) {
         const tabela = resolverTabelaInterna(
           tabelas,
           // O vendedor é pago pela tabela da CATEGORIA da venda; supervisão e
@@ -231,10 +232,16 @@ export async function apurarComissoesEquipe(options?: {
  */
 function papeisDaVenda(
   contexto: ContextoVenda,
+  categoriaVenda: CategoriaVendedor,
 ): { papel: PapelComissao; destinoTabela: DestinoComissao }[] {
   const papeis: { papel: PapelComissao; destinoTabela: DestinoComissao }[] = [
     { papel: "VENDEDOR", destinoTabela: "INICIANTE" },
   ];
+
+  // Supervisão e gerência saem do mesmo bolso que a comissão do iniciante — o
+  // da WR. Venda de veterano ou expert é paga pela administradora, e não há de
+  // onde tirar os outros dois papéis.
+  if (!remuneraSupervisaoEGerencia(categoriaVenda)) return papeis;
 
   if (contexto.equipeId && !contexto.supervisaoIgualGerencia) {
     papeis.push({ papel: "SUPERVISOR", destinoTabela: "SUPERVISOR" });
