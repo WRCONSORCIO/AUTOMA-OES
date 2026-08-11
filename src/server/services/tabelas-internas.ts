@@ -25,6 +25,64 @@ import {
  * par destino/segmento é deixada como está, porque o percentual que vale é o
  * que a WR ajustou, não o da carga.
  */
+/**
+ * A data a partir da qual um percentual novo precisa valer para servir.
+ *
+ * A venda mais antiga da base. Percentual que começa hoje não alcança nada do
+ * que já foi importado — e como esta tela não pede data, começar em "hoje"
+ * produzia tabelas corretas que não calculavam nada, sem nada explicando.
+ */
+export async function inicioQueCobreABase(): Promise<Date> {
+  const { _min } = await prisma.cota.aggregate({ _min: { dataVenda: true } });
+  const referencia = _min.dataVenda ?? new Date();
+  return new Date(
+    Date.UTC(referencia.getUTCFullYear(), referencia.getUTCMonth(), referencia.getUTCDate()),
+  );
+}
+
+/**
+ * Faz os percentuais já cadastrados valerem desde a venda mais antiga.
+ *
+ * Existe porque a tela de percentuais não pede data de vigência — e não
+ * deveria mesmo pedir, para o caso comum. Mas quem cadastrou antes desta
+ * correção ficou com tabelas começando no dia do cadastro, que não alcançam
+ * nenhuma venda importada. Sem esta ação não haveria como consertar pela
+ * interface.
+ *
+ * **Não altera percentual nenhum**, só a data a partir da qual eles contam. E
+ * só recua: tabela que já cobre a base fica como está.
+ */
+export async function ajustarVigenciaParaCobrirBase(
+  usuario: ContextoUsuario,
+): Promise<{ ajustadas: number; inicio: Date }> {
+  const inicio = await inicioQueCobreABase();
+
+  const atrasadas = await prisma.tabelaComissaoInterna.findMany({
+    where: { ativo: true, vigenteDe: { gt: inicio } },
+    select: { id: true, destino: true, segmento: true, vigenteDe: true },
+  });
+
+  if (atrasadas.length === 0) return { ajustadas: 0, inicio };
+
+  await prisma.tabelaComissaoInterna.updateMany({
+    where: { id: { in: atrasadas.map((tabela) => tabela.id) } },
+    data: { vigenteDe: inicio },
+  });
+
+  await registrarAuditoria({
+    acao: "MUDANCA_PERCENTUAL",
+    entidade: "TabelaComissaoInterna",
+    descricao:
+      `Vigência de ${atrasadas.length} tabela(s) recuada para ${inicio.toISOString().slice(0, 10)}, ` +
+      "para alcançar as vendas já importadas. Nenhum percentual foi alterado.",
+    dadosAntes: { tabelas: atrasadas },
+    dadosDepois: { vigenteDe: inicio },
+    usuario,
+  });
+
+  return { ajustadas: atrasadas.length, inicio };
+}
+
 export async function semearTabelasInternas(
   usuario: ContextoUsuario,
   vigenteDe?: Date,
@@ -38,16 +96,11 @@ export async function semearTabelasInternas(
   // motivo.
   //
   // Base vazia continua começando hoje: aí não há passado a cobrir.
-  const referencia =
-    vigenteDe ??
-    (
-      await prisma.cota.aggregate({ _min: { dataVenda: true } })
-    )._min.dataVenda ??
-    new Date();
-
-  const inicio = new Date(
-    Date.UTC(referencia.getUTCFullYear(), referencia.getUTCMonth(), referencia.getUTCDate()),
-  );
+  const inicio = vigenteDe
+    ? new Date(
+        Date.UTC(vigenteDe.getUTCFullYear(), vigenteDe.getUTCMonth(), vigenteDe.getUTCDate()),
+      )
+    : await inicioQueCobreABase();
 
   let tabelasCriadas = 0;
   let faixasCriadas = 0;
@@ -179,7 +232,9 @@ export async function salvarTabelaInterna(
       data: {
         destino: entrada.destino,
         segmento: entrada.segmento,
-        vigenteDe: new Date(),
+        // Mesma razão da carga inicial: a tabela nasce valendo desde a venda
+        // mais antiga da base, senão nasce sem alcançar nada.
+        vigenteDe: await inicioQueCobreABase(),
         faixas: {
           create: faixas.map((faixa) => ({
             parcela: faixa.parcela,

@@ -3,7 +3,7 @@ import type { DestinoComissao, SegmentoVenda } from "@prisma/client";
 import { exigirPermissao } from "@/server/auth/session";
 import { podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
-import { formatarPercentual } from "@/lib/format";
+import { formatarData, formatarPercentual } from "@/lib/format";
 import type { ParametrosBusca } from "@/lib/filtros";
 import {
   Aviso,
@@ -27,7 +27,7 @@ import {
   ROTULO_SEGMENTO,
 } from "@/server/domain/tabelas-internas";
 import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
-import { BotaoSemear, EditorTabela } from "./formularios";
+import { BotaoAjustarVigencia, BotaoSemear, EditorTabela } from "./formularios";
 import { BotaoAlternarFlex, FormularioFlex } from "../tabelas/formularios";
 import { listarRegrasEstorno } from "@/modules/apuracao/application/use-cases/configurar-regra-estorno";
 import { LinhaRegraEstorno, NovaRegraEstorno } from "./estorno-formularios";
@@ -65,7 +65,8 @@ export default async function PaginaConfiguracoes({
   const brutos = await searchParams;
   const aba = lerAba(brutos, ABAS);
 
-  const [tabelas, modalidades, regrasEstorno, metas, vendedores] = await Promise.all([
+  const [tabelas, modalidades, regrasEstorno, metas, vendedores, primeiraVenda] =
+    await Promise.all([
     carregarTabelasInternas(),
     prisma.modalidadeFlex.findMany({ orderBy: { percentual: "asc" } }),
     listarRegrasEstorno(),
@@ -75,7 +76,12 @@ export default async function PaginaConfiguracoes({
       select: { id: true, nome: true },
       orderBy: { nome: "asc" },
     }),
-  ]);
+    // A venda mais antiga é a régua: percentual que começa depois dela deixa
+    // parte da base sem cálculo.
+    prisma.cota.aggregate({ _min: { dataVenda: true } }),
+    ]);
+
+  const vendaMaisAntiga = primeiraVenda._min.dataVenda;
 
   const dia = (data: Date | null) => (data ? data.toISOString().slice(0, 10) : null);
   const metasView = metas.map((meta) => ({
@@ -108,11 +114,19 @@ export default async function PaginaConfiguracoes({
           parcela: faixa.parcela,
           percentual: String(faixa.percentual).replace(".", ","),
         })),
+        vigenteDe: tabela ? formatarData(tabela.vigenteDe) : null,
+        // Vigência que começa depois da venda mais antiga não alcança tudo o
+        // que já foi importado — é o que faz percentual certo calcular zero.
+        atrasada:
+          tabela !== undefined &&
+          vendaMaisAntiga !== null &&
+          tabela.vigenteDe.getTime() > vendaMaisAntiga.getTime(),
       };
     }),
   );
 
   const semNenhuma = tabelas.length === 0;
+  const algumaAtrasada = quadros.some((quadro) => quadro.atrasada);
 
   return (
     <>
@@ -141,10 +155,21 @@ export default async function PaginaConfiguracoes({
 
           {podeEditar ? (
             <Card>
-              <CardContent className="py-4">
+              <CardContent className="flex flex-col gap-4 py-4">
                 <BotaoSemear />
+                {algumaAtrasada ? <BotaoAjustarVigencia /> : null}
               </CardContent>
             </Card>
+          ) : null}
+
+          {algumaAtrasada ? (
+            <Aviso tom="critico">
+              Há percentuais cadastrados cuja vigência começa <strong>depois</strong> de vendas
+              que já estão na base. Eles estão corretos, mas não alcançam essas vendas — e o
+              resultado é comissão zero sem nenhum erro aparente. Use{" "}
+              <strong>“Aplicar às vendas já importadas”</strong> acima; nenhum percentual é
+              alterado, só a data a partir da qual eles contam.
+            </Aviso>
           ) : null}
 
           {podeEditar ? (
