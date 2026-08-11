@@ -122,6 +122,23 @@ export const DESTINOS_PAGOS_PELA_WR: readonly DestinoComissao[] = [
   "GERENCIA",
 ];
 
+/**
+ * Supervisão e gerência só são pagas sobre venda de INICIANTE.
+ *
+ * Decorre de quem paga a venda. A comissão de iniciante sai do bolso da WR, e
+ * é dela que saem também a supervisão e a gerência daquela venda. Veterano e
+ * expert recebem direto da administradora — a WR não desembolsa nada, e não
+ * há de onde tirar supervisão nem gerência.
+ *
+ * Venda sem categoria congelada não remunera ninguém: sem saber sob qual
+ * condição foi feita, pagar seria pagar por suposição.
+ */
+export function remuneraSupervisaoEGerencia(
+  categoriaVenda: string | null | undefined,
+): boolean {
+  return categoriaVenda === "INICIANTE";
+}
+
 export function wrPaga(destino: DestinoComissao): boolean {
   return DESTINOS_PAGOS_PELA_WR.includes(destino);
 }
