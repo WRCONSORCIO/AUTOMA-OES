@@ -32,6 +32,7 @@ import {
   lacunasDeTabela,
 } from "@/server/services/comissao-equipe";
 import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
+import { aPagarDoMes } from "@/modules/apuracao/infrastructure/queries/a-pagar-do-mes";
 import { ROTULO_DESTINO, ROTULO_SEGMENTO } from "@/server/domain/tabelas-internas";
 import { BotaoApurar } from "./apurar";
 
@@ -62,7 +63,7 @@ export default async function PaginaComissoesEquipe({
   const papel = texto(brutos, "papel");
   const categoria = texto(brutos, "categoria");
 
-  const [painel, tabelas, lacunas, tabelasAdministradora, gerencias, equipes] =
+  const [painel, aPagar, tabelas, lacunas, tabelasAdministradora, gerencias, equipes] =
     await Promise.all([
     carregarPainelComissaoEquipe(
       {
@@ -75,6 +76,16 @@ export default async function PaginaComissoesEquipe({
       },
       escopo,
     ),
+    // O que a WR deve pagar sobre o que a administradora pagou no período.
+    // É este o número da folha: se o cliente não paga a parcela, ela não
+    // aparece no relatório e o vendedor não recebe por ela.
+    aPagarDoMes({
+      de: parseDataBr(parametros.de) ?? new Date(0),
+      ate: parseDataBr(parametros.ate) ?? new Date(),
+      gerenciaId: escopo.gerenciaId ?? parametros.gerencia,
+      equipeId: escopo.equipeId ?? parametros.equipe,
+      papel: papel ? (papel as "VENDEDOR") : undefined,
+    }),
     carregarTabelasInternas(),
     lacunasDeTabela(),
     // Quantas tabelas do OUTRO tipo existem. Sem este número, quem cadastrou a
@@ -147,29 +158,43 @@ export default async function PaginaComissoesEquipe({
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Indicador
-          rotulo="Previsto"
-          valor={formatarMoeda(painel.totais.previsto)}
-          detalhe={`${formatarNumero(painel.totais.vendas)} apuração(ões) de venda`}
-          icone={<HandCoins className="h-4 w-4" />}
-        />
-        <Indicador
-          rotulo="Liberado"
-          valor={formatarMoeda(painel.totais.liberado)}
-          detalhe="Coberto pelas parcelas já recebidas"
-          tom="bom"
+          rotulo="A pagar no período"
+          valor={formatarMoeda(aPagar.total)}
+          detalhe={`${formatarNumero(aPagar.parcelas)} parcela(s) recebidas da administradora`}
+          tom={aPagar.total > 0 ? "bom" : "neutro"}
           icone={<Wallet className="h-4 w-4" />}
         />
         <Indicador
-          rotulo="A liberar"
-          valor={formatarMoeda(painel.totais.aLiberar)}
-          detalhe="Aguardando o recebimento da administradora"
-          tom="atencao"
+          rotulo="Vendedores"
+          valor={formatarMoeda(
+            aPagar.linhas
+              .filter((linha) => linha.papel === "VENDEDOR")
+              .reduce((soma, linha) => soma + linha.valor, 0),
+          )}
+          detalhe={`Supervisão ${formatarMoeda(
+            aPagar.linhas
+              .filter((linha) => linha.papel === "SUPERVISOR")
+              .reduce((soma, linha) => soma + linha.valor, 0),
+          )} · Gerência ${formatarMoeda(
+            aPagar.linhas
+              .filter((linha) => linha.papel === "GERENCIA")
+              .reduce((soma, linha) => soma + linha.valor, 0),
+          )}`}
+          icone={<HandCoins className="h-4 w-4" />}
+        />
+        <Indicador
+          rotulo="Projeção da carteira"
+          valor={formatarMoeda(painel.totais.previsto)}
+          detalhe="Total que as vendas do período renderão ao longo do plano — não é folha"
           icone={<Hourglass className="h-4 w-4" />}
         />
         <Indicador
-          rotulo="Vendedores"
-          valor={formatarMoeda(painel.porPapel.VENDEDOR.previsto)}
-          detalhe={`Supervisão ${formatarMoeda(painel.porPapel.SUPERVISOR.previsto)} · Gerência ${formatarMoeda(painel.porPapel.GERENCIA.previsto)}`}
+          rotulo="Parcelas sem pagamento"
+          valor={formatarNumero(
+            aPagar.semPagamento.parcelaNaoRemunerada + aPagar.semPagamento.semCota,
+          )}
+          detalhe={`${formatarNumero(aPagar.semPagamento.parcelaNaoRemunerada)} fora das parcelas que pagam · ${formatarNumero(aPagar.semPagamento.semCota)} sem vendedor ou categoria`}
+          tom={aPagar.semPagamento.semCota > 0 ? "atencao" : "neutro"}
         />
       </div>
 
@@ -221,10 +246,11 @@ export default async function PaginaComissoesEquipe({
 
       <Card>
         <CardHeader>
-          <CardTitle>Por beneficiário</CardTitle>
+          <CardTitle>A pagar por beneficiário</CardTitle>
           <p className="text-sm text-[var(--color-texto-2)]">
-            O período filtra pela data da venda — é a venda que gera a comissão, não o mês em que
-            a parcela foi paga.
+            O período filtra pela <strong>data do relatório da administradora</strong>: só entra
+            aqui a parcela que a WR recebeu. Se o cliente não paga, o vendedor não recebe — e a
+            parcela que a tabela não remunera também não aparece.
           </p>
         </CardHeader>
         <CardContent className="p-0">
@@ -233,42 +259,30 @@ export default async function PaginaComissoesEquipe({
               <tr>
                 <Th>Beneficiário</Th>
                 <Th>Papel</Th>
+                <Th className="text-right">Parcelas</Th>
                 <Th className="text-right">Vendas</Th>
                 <Th className="text-right">Base</Th>
-                <Th className="text-right">Previsto</Th>
-                <Th className="text-right">Liberado</Th>
-                <Th className="text-right">A liberar</Th>
-                <Th className="text-right">% liberado</Th>
+                <Th className="text-right">A pagar</Th>
               </tr>
             </Cabecalho>
             <tbody>
-              {painel.linhas.length === 0 ? (
+              {aPagar.linhas.length === 0 ? (
                 <TabelaVazia
-                  colunas={8}
-                  mensagem="Nenhuma comissão apurada no período. Verifique se há tabela vigente para a categoria das vendas."
+                  colunas={6}
+                  mensagem="Nenhuma parcela recebida da administradora no período. Importe o relatório de comissão em Importações, ou amplie o período."
                 />
               ) : (
-                painel.linhas.map((linha) => (
-                  <Tr key={`${linha.papel}-${linha.chave}`}>
+                aPagar.linhas.map((linha) => (
+                  <Tr key={linha.chave}>
                     <Td className="font-medium">{linha.beneficiario}</Td>
                     <Td>
                       <Badge tom={TOM_PAPEL[linha.papel]}>{ROTULO_PAPEL[linha.papel]}</Badge>
                     </Td>
+                    <Td className="numerico text-right">{formatarNumero(linha.parcelas)}</Td>
                     <Td className="numerico text-right">{formatarNumero(linha.vendas)}</Td>
                     <Td className="numerico text-right">{formatarMoeda(linha.base)}</Td>
-                    <Td className="numerico text-right font-medium">
-                      {formatarMoeda(linha.previsto)}
-                    </Td>
-                    <Td className="numerico text-right text-[var(--color-bom)]">
-                      {formatarMoeda(linha.liberado)}
-                    </Td>
-                    <Td className="numerico text-right text-[var(--color-atencao)]">
-                      {formatarMoeda(linha.aLiberar)}
-                    </Td>
-                    <Td className="numerico text-right">
-                      {formatarPercentual(
-                        linha.previsto > 0 ? (linha.liberado / linha.previsto) * 100 : 0,
-                      )}
+                    <Td className="numerico text-right font-medium text-[var(--color-bom)]">
+                      {formatarMoeda(linha.valor)}
                     </Td>
                   </Tr>
                 ))
