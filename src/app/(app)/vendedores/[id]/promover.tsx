@@ -75,9 +75,10 @@ export function Promover({
           </>
         ) : (
           <>
-            Abre o CNPJ de expert, que <strong>não vende</strong>: é a identidade pela qual{" "}
-            <strong>{pessoaNome}</strong> passa a receber supervisão. O CNPJ de veterano{" "}
-            <strong>continua vendendo e recebendo</strong> normalmente.
+            Abre o CNPJ de expert, que <strong>não vende</strong>: ele existe para{" "}
+            <strong>{pessoaNome}</strong> receber o restante da comissão. O CNPJ de veterano{" "}
+            <strong>continua sendo por onde ela vende</strong>, e continua recebendo
+            normalmente.
           </>
         )}{" "}
         As vendas já feitas mantêm a categoria congelada na data em que aconteceram: nenhum

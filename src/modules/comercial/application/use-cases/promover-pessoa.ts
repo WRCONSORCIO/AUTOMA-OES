@@ -145,7 +145,7 @@ export async function promoverPessoa(
             situacao: "ATIVO",
             observacoes: documentoNovo.vende
               ? null
-              : "Documento de expert: não recebe venda. É a identidade pela qual a pessoa recebe supervisão.",
+              : "Documento de expert: não recebe venda. Existe para receber o restante da comissão das vendas feitas pelo CNPJ de veterano, que continua vendendo.",
           },
           select: { id: true, nome: true },
         });
