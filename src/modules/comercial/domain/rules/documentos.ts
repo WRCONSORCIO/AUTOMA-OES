@@ -68,9 +68,9 @@ export function podeAcrescentarDocumento(
  * O documento pelo qual a pessoa vende hoje.
  *
  * Só um vende por vez. Ao ser promovida, a pessoa para de vender no documento
- * anterior — e o CNPJ de expert não vende: ele é a identidade pela qual ela
- * recebe supervisão. Então o documento ativo é o de maior categoria que ainda
- * não foi encerrado, **exceto** o expert.
+ * anterior — e o CNPJ de expert não vende: ele existe para receber o restante
+ * da comissão das vendas feitas pelo CNPJ de veterano. Então o documento ativo
+ * é o de maior categoria que ainda não foi encerrado, **exceto** o expert.
  */
 export function documentoQueVende(
   documentos: readonly DocumentoDaPessoa[],

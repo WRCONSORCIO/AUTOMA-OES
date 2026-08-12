@@ -23,7 +23,8 @@ import {
  * | Veterano → Expert | CNPJ que **não vende** | CNPJ veterano **continua vendendo** normalmente |
  *
  * No segundo degrau nada é encerrado: o expert vende pelo CNPJ de veterano, e o
- * CNPJ de expert existe para ser a identidade pela qual ele recebe supervisão.
+ * CNPJ de expert existe para receber o RESTANTE da comissão das vendas feitas
+ * pelo CNPJ de veterano — que continua sendo por onde ele vende.
  *
  * Módulo puro: sem banco, sem I/O. Devolve o plano; quem aplica é o caso de uso.
  */
@@ -35,7 +36,7 @@ export interface PlanoPromocao {
     readonly tipo: "CPF" | "CNPJ";
     readonly categoria: Categoria;
     readonly vigenteDe: Date;
-    /** Falso para o CNPJ de expert: ele é identidade de supervisão. */
+    /** Falso para o CNPJ de expert: ele recebe, não vende. */
     readonly vende: boolean;
   };
   /**
@@ -127,7 +128,7 @@ export function planejarPromocao(
   }
 
   // Veterano → Expert. Nada é encerrado: quem vende continua sendo o CNPJ de
-  // veterano, e o CNPJ de expert nasce como identidade de supervisão.
+  // veterano, e o CNPJ de expert nasce só para receber o restante da comissão.
   return sucesso({
     documentoNovo: {
       cpfCnpj: entrada.cpfCnpjNovo.replace(/\D/g, ""),
@@ -138,6 +139,6 @@ export function planejarPromocao(
     },
     encerrarParaVenda: null,
     resumo:
-      "Abre o CNPJ de expert, que não vende — é a identidade pela qual a pessoa recebe supervisão. O CNPJ de veterano continua vendendo e recebendo normalmente.",
+      "Abre o CNPJ de expert, que não vende: ele existe para receber o restante da comissão. O CNPJ de veterano continua vendendo e recebendo normalmente.",
   });
 }
