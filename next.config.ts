@@ -17,6 +17,15 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts"],
   },
+  // Os provedores costumam ser configurados com URLs curtas de webhook. As
+  // rotas continuam vivendo em /api/webhooks/*, que é onde o App Router as
+  // procura; estas reescritas só evitam ter de reconfigurar o gateway.
+  async rewrites() {
+    return [
+      { source: "/webhooks/:path*", destination: "/api/webhooks/:path*" },
+    ];
+  },
+
   async headers() {
     return [
       {
