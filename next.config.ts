@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Saída autocontida, usada pela imagem Docker: o runtime carrega só o que o
+  // servidor precisa, sem o node_modules inteiro.
+  output: "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["pdfjs-dist", "@prisma/client", "bcryptjs"],
   // O pdfjs carrega o worker por import dinâmico, que o rastreador de arquivos
@@ -17,6 +20,15 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts"],
   },
+  // Os provedores costumam ser configurados com URLs curtas de webhook. As
+  // rotas continuam vivendo em /api/webhooks/*, que é onde o App Router as
+  // procura; estas reescritas só evitam ter de reconfigurar o gateway.
+  async rewrites() {
+    return [
+      { source: "/webhooks/:path*", destination: "/api/webhooks/:path*" },
+    ];
+  },
+
   async headers() {
     return [
       {

@@ -66,9 +66,27 @@ preservado, mas **não geram comissão WR** — não há regra definida para ele
 | Supervisor | Somente a própria equipe |
 | Financeiro | Comissões, importações, tabelas e dashboard |
 | RH | Vendedores, equipes e gerências |
+| Atendente | Conversas e clientes do WhatsApp, sem configurações |
 
 O escopo de gerência/equipe é aplicado no servidor, em todas as consultas —
 inclusive nas agregações SQL do dashboard.
+
+## Atendimento automatizado via WhatsApp
+
+Além do ERP, o sistema traz um módulo de atendimento por WhatsApp: menu, escolha
+de plano, cobrança pelo gateway, liberação após a confirmação do pagamento,
+instruções por aparelho e transferência para atendente humano.
+
+O fluxo inteiro é configurado pelo painel — mensagens, etapas, opções, planos e
+aparelhos vêm do banco, não do código. Duas regras estruturam o módulo:
+
+- **Pagamento só avança por confirmação do gateway.** "Já paguei" escrito pelo
+  cliente não move nada; quem marca `PAGO` é o webhook validado por assinatura.
+- **O estado da conversa vive no PostgreSQL.** Reiniciar o processo não faz o
+  cliente perder onde parou.
+
+Guia completo — instalação, WhatsApp, Stripe, fluxos, produção, backup e
+solução de problemas: **[docs/ATENDIMENTO.md](docs/ATENDIMENTO.md)**.
 
 ## Colocando para rodar
 
@@ -211,6 +229,10 @@ npm run typecheck    # verificação de tipos
 npm run db:seed      # carga inicial
 npm run backup:run   # backup manual pela linha de comando
 
+npm run atendimento:manutencao   # expira cobranças vencidas e fecha conversas paradas
+npm run docker:up                # sobe app + postgres com Docker
+npm run docker:seed              # carga inicial dentro do contêiner
+
 # conferir os parsers contra arquivos reais, sem tocar no banco
 npx tsx scripts/validar-parsers.ts base.csv fechamento.pdf
 ```
@@ -223,6 +245,7 @@ src/server/domain/            regras de negócio (puras, testáveis)
 src/server/importacao/        parsers e serviços de importação
 src/server/services/          vendedores, transferências, dashboard, auditoria, backup
 src/server/auth/              sessão e controle de permissões
+src/server/atendimento/       módulo de WhatsApp (domínio, motor, provedores)
 src/app/(app)/                telas autenticadas
 src/components/               componentes reutilizáveis
 tests/                        testes das regras
