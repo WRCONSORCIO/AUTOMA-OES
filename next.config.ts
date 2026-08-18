@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Saída autocontida, usada pela imagem Docker: o runtime carrega só o que o
+  // servidor precisa, sem o node_modules inteiro.
+  output: "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["pdfjs-dist", "@prisma/client", "bcryptjs"],
   // O pdfjs carrega o worker por import dinâmico, que o rastreador de arquivos
