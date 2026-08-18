@@ -16,7 +16,6 @@ import {
   Percent,
   TriangleAlert,
   Link2,
-  MessagesSquare,
   ScrollText,
   SlidersHorizontal,
   Upload,
@@ -46,7 +45,6 @@ const ICONES = {
   usuarios: UserCog,
   auditoria: ScrollText,
   backups: HardDriveDownload,
-  atendimento: MessagesSquare,
 } as const;
 
 function estaAtivo(pathname: string, href: string): boolean {

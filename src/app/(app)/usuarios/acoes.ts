@@ -12,14 +12,7 @@ export interface EstadoAcao {
   sucesso?: string;
 }
 
-const PERFIS = [
-  "ADMINISTRADOR",
-  "GERENTE",
-  "SUPERVISOR",
-  "FINANCEIRO",
-  "RH",
-  "ATENDENTE",
-] as const;
+const PERFIS = ["ADMINISTRADOR", "GERENTE", "SUPERVISOR", "FINANCEIRO", "RH"] as const;
 
 const esquema = z.object({
   nome: z.string().trim().min(3, "Informe o nome"),

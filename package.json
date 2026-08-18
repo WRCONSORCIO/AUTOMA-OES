@@ -18,12 +18,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "backup:run": "tsx scripts/backup-diario.ts",
-    "prisma:seed": "tsx prisma/seed.ts",
-    "atendimento:manutencao": "tsx scripts/manutencao-atendimento.ts",
-    "docker:up": "docker compose up -d --build",
-    "docker:logs": "docker compose logs -f app",
-    "docker:seed": "docker compose exec app npx tsx prisma/seed.ts"
+    "backup:run": "tsx scripts/backup-diario.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -14,7 +14,6 @@ import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { criarEstruturaInicial } from "@/server/services/instalacao";
-import { criarEstruturaAtendimento } from "@/server/atendimento/instalacao";
 
 async function main() {
   const resumo = await criarEstruturaInicial();
@@ -25,12 +24,6 @@ async function main() {
   if (resumo.tabelaCriada) {
     console.log("tabela de comissão de Iniciante criada (4% / 3% / 2% / 1%)");
   }
-
-  const atendimento = await criarEstruturaAtendimento();
-  console.log(
-    `atendimento — aparelhos: ${atendimento.aparelhos} · mensagens: ${atendimento.mensagens} · ` +
-      `horários: ${atendimento.horarios} · fluxos: ${atendimento.fluxos}`,
-  );
 
   await criarAdministrador();
 }
