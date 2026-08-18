@@ -41,6 +41,7 @@ export function NovoUsuario({
             <option value="SUPERVISOR">Supervisor — apenas a própria equipe</option>
             <option value="FINANCEIRO">Financeiro — módulos financeiros</option>
             <option value="RH">RH — módulos de vendedores</option>
+            <option value="ATENDENTE">Atendente — conversas do WhatsApp</option>
           </Selecao>
         </Campo>
 
