@@ -27,9 +27,6 @@ enum PerfilUsuario {
   SUPERVISOR
   FINANCEIRO
   RH
-  /// Opera o atendimento via WhatsApp: conversas e clientes, sem acesso às
-  /// configurações críticas nem ao ERP comercial.
-  ATENDENTE
 }
 
 enum CategoriaVendedor {
@@ -214,23 +211,18 @@ model Usuario {
   gerencia Gerencia? @relation(fields: [gerenciaId], references: [id])
   equipe   Equipe?   @relation(fields: [equipeId], references: [id])
 
-  auditorias             AuditLog[]
-  importacoes            Importacao[]
-  backups                Backup[]
-  categoriasRegistradas  VendedorCategoriaHistorico[]
-  recuperacoes           VendedorRecuperacao[]
-  recuperacoesCanceladas VendedorRecuperacao[]           @relation("RecuperacaoCancelada")
-  overridesCriados       CotaVendedorOverride[]
-  overridesHistorico     CotaVendedorOverrideHistorico[]
-  alocacoesRegistradas   VendedorAlocacaoHistorico[]
-  vinculosRegistrados    PessoaVinculoHistorico[]
-  regrasEstorno          RegraEstorno[]
-  metasPromocao          MetaPromocao[]
-
-  // Atendimento via WhatsApp
-  conversasAtendidas Conversa[]            @relation("ConversasDoAtendente")
-  mensagensEnviadas  MensagemAtendimento[] @relation("MensagensDoAtendente")
-  historicoPedidos   PedidoHistorico[]     @relation("HistoricoPedidoUsuario")
+  auditorias            AuditLog[]
+  importacoes           Importacao[]
+  backups               Backup[]
+  categoriasRegistradas VendedorCategoriaHistorico[]
+  recuperacoes          VendedorRecuperacao[]
+  recuperacoesCanceladas VendedorRecuperacao[] @relation("RecuperacaoCancelada")
+  overridesCriados      CotaVendedorOverride[]
+  overridesHistorico    CotaVendedorOverrideHistorico[]
+  alocacoesRegistradas  VendedorAlocacaoHistorico[]
+  vinculosRegistrados   PessoaVinculoHistorico[]
+  regrasEstorno         RegraEstorno[]
+  metasPromocao         MetaPromocao[]
 
   @@index([perfil, ativo])
   @@index([gerenciaId])
@@ -244,15 +236,15 @@ model Gerencia {
   criadoEm     DateTime       @default(now())
   atualizadoEm DateTime       @updatedAt
 
-  equipes              Equipe[]
-  vendedores           Vendedor[]
-  usuarios             Usuario[]
-  cotas                Cota[]
-  comissoes            ComissaoRegistro[]
-  comissoesEquipe      ComissaoEquipe[]
-  bonus                BonusIncentivo[]
+  equipes           Equipe[]
+  vendedores        Vendedor[]
+  usuarios          Usuario[]
+  cotas             Cota[]
+  comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
+  bonus             BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
-  alocacaoHistorico    VendedorAlocacaoHistorico[]
+  alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@index([status])
 }
@@ -270,14 +262,14 @@ model Equipe {
 
   gerencia Gerencia @relation(fields: [gerenciaId], references: [id])
 
-  vendedores           Vendedor[]
-  usuarios             Usuario[]
-  cotas                Cota[]
-  comissoes            ComissaoRegistro[]
-  comissoesEquipe      ComissaoEquipe[]
-  bonus                BonusIncentivo[]
+  vendedores        Vendedor[]
+  usuarios          Usuario[]
+  cotas             Cota[]
+  comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
+  bonus             BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
-  alocacaoHistorico    VendedorAlocacaoHistorico[]
+  alocacaoHistorico VendedorAlocacaoHistorico[]
 
   @@unique([gerenciaId, nome])
   @@index([status])
@@ -301,11 +293,11 @@ model Pessoa {
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
-  documentos           Vendedor[]
-  historicoCategorias  VendedorCategoriaHistorico[]
-  recuperacoes         VendedorRecuperacao[]
-  vinculos             PessoaVinculoHistorico[]
-  comissoesEquipe      ComissaoEquipe[]
+  documentos          Vendedor[]
+  historicoCategorias VendedorCategoriaHistorico[]
+  recuperacoes        VendedorRecuperacao[]
+  vinculos            PessoaVinculoHistorico[]
+  comissoesEquipe     ComissaoEquipe[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
 
   @@index([nome])
@@ -334,13 +326,13 @@ model PessoaVinculoHistorico {
 }
 
 model Vendedor {
-  id                   String            @id @default(cuid())
-  nome                 String
+  id               String            @id @default(cuid())
+  nome             String
   // Normalizado (somente dígitos) para casar com a base da administradora.
-  cpfCnpj              String            @unique
-  cpfCnpjFormatado     String?
+  cpfCnpj          String            @unique
+  cpfCnpjFormatado String?
   /// Derivado do documento: 11 dígitos é CPF, 14 é CNPJ.
-  tipoDocumento        TipoDocumento     @default(CPF)
+  tipoDocumento    TipoDocumento     @default(CPF)
   /// Data a partir da qual o documento não recebe VENDA NOVA.
   ///
   /// Não é desativação, e a diferença é dinheiro: o documento **continua
@@ -354,15 +346,15 @@ model Vendedor {
   ///
   /// Venda que chegar depois desta data é anomalia — vira alerta, nunca
   /// bloqueio: a administradora é a fonte da verdade e o fato aconteceu.
-  encerradoParaVendaEm DateTime?         @db.Date
-  equipeId             String?
-  gerenciaId           String?
-  categoriaAtual       CategoriaVendedor @default(INICIANTE)
-  dataEntradaWr        DateTime?         @db.Date
-  situacao             SituacaoVendedor  @default(ATIVO)
-  observacoes          String?
-  criadoEm             DateTime          @default(now())
-  atualizadoEm         DateTime          @updatedAt
+  encerradoParaVendaEm DateTime?     @db.Date
+  equipeId         String?
+  gerenciaId       String?
+  categoriaAtual   CategoriaVendedor @default(INICIANTE)
+  dataEntradaWr    DateTime?         @db.Date
+  situacao         SituacaoVendedor  @default(ATIVO)
+  observacoes      String?
+  criadoEm         DateTime          @default(now())
+  atualizadoEm     DateTime          @updatedAt
 
   /// Todo cadastro pertence a uma pessoa. Documentos da mesma pessoa
   /// compartilham categoria, recuperação e os totais consolidados.
@@ -377,15 +369,15 @@ model Vendedor {
   recuperacoes        VendedorRecuperacao[]
   vinculos            PessoaVinculoHistorico[]
 
-  cotasAdministradora  Cota[]                          @relation("VendedorAdministradora")
-  cotasEfetivas        Cota[]                          @relation("VendedorEfetivo")
-  overrides            CotaVendedorOverride[]
-  overridesAnteriores  CotaVendedorOverrideHistorico[] @relation("VendedorAnterior")
-  overridesNovos       CotaVendedorOverrideHistorico[] @relation("VendedorNovo")
+  cotasAdministradora Cota[]                          @relation("VendedorAdministradora")
+  cotasEfetivas       Cota[]                          @relation("VendedorEfetivo")
+  overrides           CotaVendedorOverride[]
+  overridesAnteriores CotaVendedorOverrideHistorico[] @relation("VendedorAnterior")
+  overridesNovos      CotaVendedorOverrideHistorico[] @relation("VendedorNovo")
   bonus                BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
-  comissoes            ComissaoRegistro[]
-  regrasEstorno        RegraEstorno[]
+  comissoes           ComissaoRegistro[]
+  regrasEstorno       RegraEstorno[]
 
   @@index([nome])
   @@index([situacao])
@@ -464,11 +456,11 @@ model VendedorRecuperacao {
   canceladoPorId     String?
   motivoCancelamento String?
 
-  pessoa       Pessoa?   @relation(fields: [pessoaId], references: [id])
-  vendedor     Vendedor? @relation(fields: [vendedorId], references: [id])
-  usuario      Usuario?  @relation(fields: [usuarioId], references: [id])
-  canceladoPor Usuario?  @relation("RecuperacaoCancelada", fields: [canceladoPorId], references: [id])
-  cotas        Cota[]
+  pessoa      Pessoa?   @relation(fields: [pessoaId], references: [id])
+  vendedor    Vendedor? @relation(fields: [vendedorId], references: [id])
+  usuario     Usuario?  @relation(fields: [usuarioId], references: [id])
+  canceladoPor Usuario? @relation("RecuperacaoCancelada", fields: [canceladoPorId], references: [id])
+  cotas       Cota[]
 
   @@index([pessoaId, dataInicio, dataFim])
   @@index([vendedorId, dataInicio, dataFim])
@@ -489,11 +481,11 @@ model Administradora {
   criadoEm     DateTime       @default(now())
   atualizadoEm DateTime       @updatedAt
 
-  cotas                Cota[]
-  bonus                BonusIncentivo[]
+  cotas       Cota[]
+  bonus          BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
-  comissoes            ComissaoRegistro[]
-  importacoes          Importacao[]
+  comissoes   ComissaoRegistro[]
+  importacoes Importacao[]
 
   @@index([status])
 }
@@ -591,14 +583,14 @@ model Cota {
   gerencia        Gerencia?            @relation(fields: [gerenciaId], references: [id])
   recuperacao     VendedorRecuperacao? @relation(fields: [recuperacaoId], references: [id])
 
-  versoes              CotaVersao[]
-  override             CotaVendedorOverride?
-  overrideHistorico    CotaVendedorOverrideHistorico[]
-  comissoes            ComissaoRegistro[]
-  comissoesEquipe      ComissaoEquipe[]
-  bonus                BonusIncentivo[]
+  versoes           CotaVersao[]
+  override          CotaVendedorOverride?
+  overrideHistorico CotaVendedorOverrideHistorico[]
+  comissoes         ComissaoRegistro[]
+  comissoesEquipe   ComissaoEquipe[]
+  bonus             BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
-  estorno              Estorno?
+  estorno           Estorno?
 
   @@unique([administradoraId, contrato, grupo, cota, cpfCnpjCliente], name: "identidadeCota")
   @@index([dataVenda])
@@ -682,14 +674,14 @@ model Estorno {
   criadoEm                    DateTime @default(now())
 
   /// Qual dos dois tipos gerou este estorno.
-  tipo               TipoEstorno @default(RECUPERACAO)
+  tipo TipoEstorno @default(RECUPERACAO)
   /// Regra vigente aplicada e o percentual dela, congelados no momento da
   /// apuração. Alterar a regra depois não reescreve este valor.
   regraEstornoId     String?
-  percentualAplicado Decimal?    @db.Decimal(9, 4)
+  percentualAplicado Decimal? @db.Decimal(9, 4)
   parcelaLimite      Int?
   /// valorReferencia × percentualAplicado.
-  valorEstorno       Decimal?    @db.Decimal(18, 2)
+  valorEstorno       Decimal? @db.Decimal(18, 2)
 
   /// Importação que trouxe o cancelamento. Responde "esta importação gerou
   /// quais estornos" sem precisar adivinhar por janela de tempo.
@@ -824,7 +816,7 @@ model ComissaoVendedorAdm {
   equipeId   String?
   gerenciaId String?
 
-  hashRegistro String   @unique
+  hashRegistro String @unique
   paginaPdf    Int?
   criadoEm     DateTime @default(now())
 
@@ -861,10 +853,10 @@ model BonusIncentivo {
   parcela         Int?
   dataInclusao    DateTime? @db.Date
 
-  valorEvento         Decimal        @db.Decimal(18, 2)
-  percentualIncentivo Decimal?       @db.Decimal(9, 4)
-  valorIncentivo      Decimal        @db.Decimal(18, 2)
-  percentualFlex      Decimal?       @db.Decimal(9, 4)
+  valorEvento         Decimal  @db.Decimal(18, 2)
+  percentualIncentivo Decimal? @db.Decimal(9, 4)
+  valorIncentivo      Decimal  @db.Decimal(18, 2)
+  percentualFlex      Decimal? @db.Decimal(9, 4)
   segmento            SegmentoVenda?
 
   periodoInicio DateTime? @db.Date
@@ -876,7 +868,7 @@ model BonusIncentivo {
   equipeId   String?
   gerenciaId String?
 
-  hashRegistro String   @unique
+  hashRegistro String @unique
   paginaPdf    Int?
   criadoEm     DateTime @default(now())
 
@@ -1105,9 +1097,9 @@ model Importacao {
 
   resumo Json?
 
-  administradora       Administradora?       @relation(fields: [administradoraId], references: [id])
-  usuario              Usuario?              @relation(fields: [usuarioId], references: [id])
-  bonus                BonusIncentivo[]
+  administradora Administradora? @relation(fields: [administradoraId], references: [id])
+  usuario        Usuario?        @relation(fields: [usuarioId], references: [id])
+  bonus            BonusIncentivo[]
   comissoesVendedorAdm ComissaoVendedorAdm[]
 
   erros     ImportacaoErro[]
@@ -1226,15 +1218,15 @@ model EventoDominio {
 
   /// Nome no padrão `contexto.agregado.fato`, sempre no passado.
   /// Ex.: `carteira.cota.cancelada`.
-  tipo   String
+  tipo String
   /// Versão do formato do payload. Permite evoluir o contrato sem reescrever
   /// eventos antigos — handler antigo continua lendo o que entende.
-  versao Int    @default(1)
+  versao Int @default(1)
 
   agregado   String
   agregadoId String
 
-  payload   Json
+  payload Json
   /// Rastro: usuário, IP, importação de origem, id de correlação.
   metadados Json?
 
@@ -1323,502 +1315,4 @@ model RegraEstorno {
 
   @@index([vendedorId, tipo, vigenteDe])
   @@index([tipo, vigenteDe])
-}
-
-// ===========================================================================
-// Atendimento automatizado via WhatsApp
-//
-// Módulo autocontido: nada aqui depende do ERP de consórcio, e o ERP não
-// depende de nada daqui. A única coisa compartilhada é `Usuario` (quem opera o
-// painel) e `ConfiguracaoSistema` (chave/valor já existente).
-//
-// Regra que atravessa o módulo inteiro: o estado do cliente vive no banco,
-// nunca em memória. Reiniciar o processo não pode perder onde o cliente parou.
-// ===========================================================================
-
-/// Tipos de etapa do motor de fluxo. Os nomes seguem o contrato do fluxo, que é
-/// o mesmo consumido pelo painel e pelo motor — mudar um valor aqui exige
-/// migração dos fluxos já cadastrados.
-enum TipoEtapaFluxo {
-  /// Envia a mensagem e segue direto para a próxima etapa.
-  TEXT
-  /// Menu numerado, respondido por número ou pelo texto da opção.
-  MENU
-  /// Botões nativos do WhatsApp (até 3), com fallback para menu numerado.
-  BUTTONS
-  /// Lista nativa do WhatsApp (até 10), com fallback para menu numerado.
-  LIST
-  /// Captura texto livre e guarda em `Conversa.contexto`.
-  INPUT
-  /// Cria a cobrança no gateway e envia o link.
-  PAYMENT
-  /// Consulta/aguarda a confirmação do gateway. Nunca confia no "paguei".
-  PAYMENT_STATUS
-  /// Lista os aparelhos ativos do banco e desvia para o fluxo do aparelho.
-  DEVICE_SELECTION
-  /// Transfere a conversa para atendimento humano.
-  HUMAN_HANDOFF
-  /// Encerra a conversa.
-  END
-}
-
-/// Gatilho que faz o fluxo ser escolhido.
-enum TipoFluxo {
-  /// Fluxo de entrada: é onde toda conversa nova começa.
-  PRINCIPAL
-  NOVA_CONTRATACAO
-  RENOVACAO
-  /// Fluxo específico de um aparelho, alcançado por `DEVICE_SELECTION`.
-  APARELHO
-  /// Fluxo auxiliar, alcançado apenas por transição explícita.
-  AUXILIAR
-}
-
-enum StatusConversa {
-  BOT
-  WAITING_PAYMENT
-  HUMAN
-  CLOSED
-}
-
-enum OrigemMensagem {
-  CLIENTE
-  BOT
-  ATENDENTE
-  SISTEMA
-}
-
-enum TipoMensagemWhats {
-  TEXTO
-  BOTOES
-  LISTA
-  IMAGEM
-  DOCUMENTO
-  AUDIO
-  TEMPLATE
-}
-
-enum TipoPedido {
-  NOVA_CONTRATACAO
-  RENOVACAO
-}
-
-enum StatusPagamento {
-  PENDING
-  PROCESSING
-  PAID
-  FAILED
-  CANCELLED
-  EXPIRED
-  REFUNDED
-}
-
-enum ProvedorPagamento {
-  STRIPE
-  MERCADO_PAGO
-  ASAAS
-  PAGBANK
-  MANUAL
-}
-
-enum ProvedorWhatsApp {
-  EVOLUTION
-  CLOUD_API
-}
-
-enum StatusEventoPagamento {
-  RECEBIDO
-  PROCESSADO
-  IGNORADO
-  ERRO
-}
-
-enum TipoLogAtendimento {
-  MENSAGEM_RECEBIDA
-  MENSAGEM_ENVIADA
-  MUDANCA_ETAPA
-  PEDIDO_CRIADO
-  PAGAMENTO
-  WEBHOOK
-  TRANSFERENCIA_HUMANA
-  RETORNO_AO_BOT
-  ERRO
-}
-
-// ---------------------------------------------------------------------------
-// Catálogo — o que o administrador cadastra
-// ---------------------------------------------------------------------------
-
-model Plano {
-  id           String         @id @default(cuid())
-  nome         String
-  descricao    String?
-  /// Duração em dias. É o que o cliente compra.
-  duracaoDias  Int
-  preco        Decimal        @db.Decimal(12, 2)
-  moeda        String         @default("BRL")
-  status       StatusRegistro @default(ATIVO)
-  ordem        Int            @default(0)
-  destaque     Boolean        @default(false)
-  /// Texto exibido ao cliente no WhatsApp. Vazio: monta a partir de nome e preço.
-  textoCliente String?
-  criadoEm     DateTime       @default(now())
-  atualizadoEm DateTime       @updatedAt
-
-  pedidos Pedido[]
-  opcoes  OpcaoEtapaFluxo[]
-
-  @@index([status, ordem])
-}
-
-model Aparelho {
-  id           String         @id @default(cuid())
-  /// Chave estável usada por fluxos e integrações. O nome pode mudar; esta não.
-  chave        String         @unique
-  nome         String
-  icone        String?
-  ordem        Int            @default(0)
-  status       StatusRegistro @default(ATIVO)
-  /// Fluxo específico deste aparelho. Sem fluxo, o bot envia `instrucoes`.
-  fluxoId      String?
-  /// Instruções diretas, para aparelho que não precisa de fluxo próprio.
-  instrucoes   String?
-  criadoEm     DateTime       @default(now())
-  atualizadoEm DateTime       @updatedAt
-
-  fluxo  Fluxo?            @relation("FluxoDoAparelho", fields: [fluxoId], references: [id])
-  opcoes OpcaoEtapaFluxo[]
-
-  @@index([status, ordem])
-}
-
-// ---------------------------------------------------------------------------
-// Motor de fluxo
-// ---------------------------------------------------------------------------
-
-model Fluxo {
-  id             String         @id @default(cuid())
-  chave          String         @unique
-  nome           String
-  descricao      String?
-  tipo           TipoFluxo      @default(AUXILIAR)
-  status         StatusRegistro @default(ATIVO)
-  /// Etapa por onde o fluxo começa.
-  etapaInicialId String?
-  criadoEm       DateTime       @default(now())
-  atualizadoEm   DateTime       @updatedAt
-
-  etapas       EtapaFluxo[] @relation("EtapasDoFluxo")
-  etapaInicial EtapaFluxo?  @relation("EtapaInicial", fields: [etapaInicialId], references: [id])
-
-  aparelhos       Aparelho[]        @relation("FluxoDoAparelho")
-  conversas       Conversa[]
-  destinoDeEtapas EtapaFluxo[]      @relation("FluxoDestinoEtapa")
-  destinoDeOpcoes OpcaoEtapaFluxo[] @relation("FluxoDestinoOpcao")
-
-  @@index([tipo, status])
-}
-
-model EtapaFluxo {
-  id       String         @id @default(cuid())
-  fluxoId  String
-  /// Identificador interno da etapa dentro do fluxo (ex.: `menu_principal`).
-  chave    String
-  nome     String
-  tipo     TipoEtapaFluxo
-  /// Corpo enviado ao cliente. Aceita variáveis `{{...}}`.
-  mensagem String
-  ordem    Int            @default(0)
-
-  /// Condição opcional avaliada antes de entrar na etapa. Formato:
-  /// `{ "variavel": "aparelho", "operador": "igual", "valor": "celular" }`.
-  /// Falhando a condição, o motor segue para `proximaEtapa`.
-  condicao Json?
-  /// Ação executada ao entrar na etapa (ex.: `criar_pedido`). Sem ação, nada
-  /// acontece além de enviar a mensagem.
-  acao     Json?
-  /// Parâmetros do tipo de etapa (título da lista, chave do INPUT, etc.).
-  config   Json?
-
-  proximaEtapaId String?
-  /// Salto para outro fluxo. Tem precedência sobre `proximaEtapaId`.
-  proximoFluxoId String?
-
-  criadoEm     DateTime @default(now())
-  atualizadoEm DateTime @updatedAt
-
-  fluxo           Fluxo             @relation("EtapasDoFluxo", fields: [fluxoId], references: [id], onDelete: Cascade)
-  proximaEtapa    EtapaFluxo?       @relation("ProximaEtapa", fields: [proximaEtapaId], references: [id])
-  anteriores      EtapaFluxo[]      @relation("ProximaEtapa")
-  proximoFluxo    Fluxo?            @relation("FluxoDestinoEtapa", fields: [proximoFluxoId], references: [id])
-  opcoes          OpcaoEtapaFluxo[] @relation("OpcoesDaEtapa")
-  destinoDeOpcoes OpcaoEtapaFluxo[] @relation("OpcaoDestino")
-  fluxosIniciados Fluxo[]           @relation("EtapaInicial")
-  conversas       Conversa[]
-
-  @@unique([fluxoId, chave])
-  @@index([fluxoId, ordem])
-}
-
-model OpcaoEtapaFluxo {
-  id        String  @id @default(cuid())
-  etapaId   String
-  rotulo    String
-  /// Valor gravado no contexto da conversa quando a opção é escolhida.
-  valor     String
-  descricao String?
-  ordem     Int     @default(0)
-  ativo     Boolean @default(true)
-
-  proximaEtapaId String?
-  proximoFluxoId String?
-  /// Ação disparada pela escolha (ex.: `atendimento_humano`).
-  acao           Json?
-
-  /// Vínculos opcionais: a opção pode representar um plano ou um aparelho.
-  planoId    String?
-  aparelhoId String?
-
-  criadoEm DateTime @default(now())
-
-  etapa        EtapaFluxo  @relation("OpcoesDaEtapa", fields: [etapaId], references: [id], onDelete: Cascade)
-  proximaEtapa EtapaFluxo? @relation("OpcaoDestino", fields: [proximaEtapaId], references: [id])
-  proximoFluxo Fluxo?      @relation("FluxoDestinoOpcao", fields: [proximoFluxoId], references: [id])
-  plano        Plano?      @relation(fields: [planoId], references: [id])
-  aparelho     Aparelho?   @relation(fields: [aparelhoId], references: [id])
-
-  @@index([etapaId, ordem])
-}
-
-// ---------------------------------------------------------------------------
-// Clientes e conversas
-// ---------------------------------------------------------------------------
-
-model ClienteAtendimento {
-  id                String         @id @default(cuid())
-  nome              String?
-  /// Somente dígitos, com DDI. É a identidade do cliente: um número, um cliente.
-  telefone          String         @unique
-  /// Como o número é exibido no painel.
-  telefoneExibicao  String
-  /// Identificador do contato no provedor (ex.: `5511999999999@s.whatsapp.net`).
-  whatsappId        String?
-  origem            String         @default("WHATSAPP")
-  status            StatusRegistro @default(ATIVO)
-  criadoEm          DateTime       @default(now())
-  atualizadoEm      DateTime       @updatedAt
-  ultimaInteracaoEm DateTime?
-
-  conversas Conversa[]
-  pedidos   Pedido[]
-  logs      LogAtendimento[]
-
-  @@index([ultimaInteracaoEm])
-}
-
-model Conversa {
-  id        String         @id @default(cuid())
-  clienteId String
-  status    StatusConversa @default(BOT)
-
-  fluxoId         String?
-  etapaId         String?
-  /// Onde o cliente esteve. Alimenta o "🔙 Voltar", que precisa voltar de
-  /// verdade — não apenas dizer que voltou.
-  historicoEtapas Json    @default("[]")
-  /// Variáveis coletadas (plano escolhido, aparelho, respostas de INPUT).
-  contexto        Json    @default("{}")
-
-  atendenteId String?
-  instanciaId String?
-
-  iniciadaEm       DateTime  @default(now())
-  ultimaMensagemEm DateTime  @default(now())
-  encerradaEm      DateTime?
-
-  cliente   ClienteAtendimento    @relation(fields: [clienteId], references: [id])
-  fluxo     Fluxo?                @relation(fields: [fluxoId], references: [id])
-  etapa     EtapaFluxo?           @relation(fields: [etapaId], references: [id])
-  atendente Usuario?              @relation("ConversasDoAtendente", fields: [atendenteId], references: [id])
-  instancia InstanciaWhatsApp?    @relation(fields: [instanciaId], references: [id])
-  mensagens MensagemAtendimento[]
-  pedidos   Pedido[]
-  logs      LogAtendimento[]
-
-  @@index([status, ultimaMensagemEm])
-  @@index([clienteId, iniciadaEm])
-}
-
-model MensagemAtendimento {
-  id         String            @id @default(cuid())
-  conversaId String
-  origem     OrigemMensagem
-  tipo       TipoMensagemWhats @default(TEXTO)
-  conteudo   String
-  /// Id da mensagem no provedor. Único: é o que impede processar duas vezes o
-  /// mesmo webhook do WhatsApp.
-  externoId  String?           @unique
-  metadados  Json?
-  /// Preenchido quando a mensagem foi enviada por um atendente humano.
-  usuarioId  String?
-  erro       String?
-  criadoEm   DateTime          @default(now())
-
-  conversa Conversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)
-  usuario  Usuario? @relation("MensagensDoAtendente", fields: [usuarioId], references: [id])
-
-  @@index([conversaId, criadoEm])
-}
-
-// ---------------------------------------------------------------------------
-// Pedidos e pagamentos
-// ---------------------------------------------------------------------------
-
-model Pedido {
-  id         String     @id @default(cuid())
-  /// Número curto exibido ao cliente e no painel (#1025).
-  numero     Int        @unique @default(autoincrement())
-  clienteId  String
-  planoId    String
-  conversaId String?
-  tipo       TipoPedido @default(NOVA_CONTRATACAO)
-
-  /// Congelados no momento da compra: mudar o preço do plano não altera pedido
-  /// já criado.
-  valor Decimal @db.Decimal(12, 2)
-  moeda String  @default("BRL")
-
-  provedorPagamento ProvedorPagamento @default(STRIPE)
-  status            StatusPagamento   @default(PENDING)
-
-  criadoEm     DateTime  @default(now())
-  pagoEm       DateTime?
-  expiraEm     DateTime?
-  atualizadoEm DateTime  @updatedAt
-  metadados    Json?
-
-  cliente    ClienteAtendimento @relation(fields: [clienteId], references: [id])
-  plano      Plano              @relation(fields: [planoId], references: [id])
-  conversa   Conversa?          @relation(fields: [conversaId], references: [id])
-  pagamentos Pagamento[]
-  historico  PedidoHistorico[]
-
-  @@index([status, criadoEm])
-  @@index([clienteId, criadoEm])
-}
-
-model PedidoHistorico {
-  id             String           @id @default(cuid())
-  pedidoId       String
-  statusAnterior StatusPagamento?
-  status         StatusPagamento
-  descricao      String
-  usuarioId      String?
-  criadoEm       DateTime         @default(now())
-
-  pedido  Pedido   @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-  usuario Usuario? @relation("HistoricoPedidoUsuario", fields: [usuarioId], references: [id])
-
-  @@index([pedidoId, criadoEm])
-}
-
-model Pagamento {
-  id           String            @id @default(cuid())
-  pedidoId     String
-  provedor     ProvedorPagamento
-  /// Id da cobrança no gateway (ex.: `cs_test_...`). Único por provedor.
-  externoId    String
-  status       StatusPagamento   @default(PENDING)
-  valor        Decimal           @db.Decimal(12, 2)
-  moeda        String            @default("BRL")
-  link         String?
-  expiraEm     DateTime?
-  payload      Json?
-  criadoEm     DateTime          @default(now())
-  atualizadoEm DateTime          @updatedAt
-
-  pedido Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-
-  @@unique([provedor, externoId])
-  @@index([pedidoId, criadoEm])
-}
-
-model EventoPagamento {
-  id           String                @id @default(cuid())
-  provedor     ProvedorPagamento
-  /// Id do evento no gateway. Único: é o que garante a idempotência do webhook.
-  eventoId     String
-  tipo         String
-  status       StatusEventoPagamento @default(RECEBIDO)
-  /// Somente o necessário para auditoria — nunca o payload inteiro com dados
-  /// sensíveis do cartão.
-  payload      Json?
-  erro         String?
-  pedidoId     String?
-  recebidoEm   DateTime              @default(now())
-  processadoEm DateTime?
-
-  @@unique([provedor, eventoId])
-  @@index([tipo, recebidoEm])
-}
-
-// ---------------------------------------------------------------------------
-// Configuração do atendimento
-// ---------------------------------------------------------------------------
-
-model ModeloMensagem {
-  id           String   @id @default(cuid())
-  /// Chave usada pelo código (ex.: `pagamento_aprovado`).
-  chave        String   @unique
-  titulo       String
-  conteudo     String
-  descricao    String?
-  /// Variáveis aceitas, exibidas como ajuda no painel.
-  variaveis    String[] @default([])
-  atualizadoEm DateTime @updatedAt
-}
-
-model InstanciaWhatsApp {
-  id                  String           @id @default(cuid())
-  nome                String
-  provedor            ProvedorWhatsApp @default(EVOLUTION)
-  apiUrl              String
-  /// Credencial cifrada em repouso. Nunca sai do backend em texto claro.
-  apiKeyCifrada       String?
-  instancia           String?
-  /// Token exigido no webhook de entrada, também cifrado.
-  webhookTokenCifrado String?
-  padrao              Boolean          @default(false)
-  status              StatusRegistro   @default(ATIVO)
-  conectadoEm         DateTime?
-  ultimoErro          String?
-  criadoEm            DateTime         @default(now())
-  atualizadoEm        DateTime         @updatedAt
-
-  conversas Conversa[]
-}
-
-model HorarioAtendimento {
-  id         String  @id @default(cuid())
-  /// 0 = domingo … 6 = sábado.
-  diaSemana  Int     @unique
-  abertura   String  @default("08:00")
-  fechamento String  @default("18:00")
-  fechado    Boolean @default(false)
-}
-
-model LogAtendimento {
-  id         String             @id @default(cuid())
-  tipo       TipoLogAtendimento
-  descricao  String
-  conversaId String?
-  clienteId  String?
-  dados      Json?
-  criadoEm   DateTime           @default(now())
-
-  conversa Conversa?           @relation(fields: [conversaId], references: [id], onDelete: SetNull)
-  cliente  ClienteAtendimento? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
-
-  @@index([tipo, criadoEm])
-  @@index([conversaId, criadoEm])
 }

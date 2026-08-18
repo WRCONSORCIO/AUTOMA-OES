@@ -24,17 +24,6 @@ export const MODULOS = [
   "usuarios",
   "auditoria",
   "backups",
-  // Atendimento automatizado via WhatsApp
-  "atendimento",
-  "conversas",
-  "clientesBot",
-  "pedidos",
-  "planos",
-  "aparelhos",
-  "fluxos",
-  "mensagensBot",
-  "configAtendimento",
-  "logsAtendimento",
 ] as const;
 
 export type Modulo = (typeof MODULOS)[number];
@@ -80,8 +69,6 @@ const MATRIZ: Record<PerfilUsuario, MatrizPerfil> = {
 
   FINANCEIRO: {
     dashboard: SOMENTE_LEITURA,
-    atendimento: SOMENTE_LEITURA,
-    pedidos: SOMENTE_LEITURA,
     cotas: SOMENTE_LEITURA,
     comissoes: TODAS,
     comissoesEquipe: TODAS,
@@ -95,23 +82,6 @@ const MATRIZ: Record<PerfilUsuario, MatrizPerfil> = {
     vendedores: TODAS,
     equipes: TODAS,
     gerencias: TODAS,
-  },
-
-  /**
-   * Atendente opera o WhatsApp e nada além dele.
-   *
-   * Enxerga conversa, cliente e pedido, e pode assumir/devolver conversa. Não
-   * edita plano, preço, fluxo nem credencial — mexer nisso muda o que o bot
-   * cobra e o que ele promete, e é decisão de administrador.
-   */
-  ATENDENTE: {
-    atendimento: SOMENTE_LEITURA,
-    conversas: TODAS,
-    clientesBot: ["ver", "editar"],
-    pedidos: SOMENTE_LEITURA,
-    planos: SOMENTE_LEITURA,
-    aparelhos: SOMENTE_LEITURA,
-    logsAtendimento: SOMENTE_LEITURA,
   },
 };
 
@@ -172,5 +142,4 @@ export const ROTULO_PERFIL: Record<PerfilUsuario, string> = {
   SUPERVISOR: "Supervisor",
   FINANCEIRO: "Financeiro",
   RH: "RH",
-  ATENDENTE: "Atendente",
 };
