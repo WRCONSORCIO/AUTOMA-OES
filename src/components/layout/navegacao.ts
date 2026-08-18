@@ -107,6 +107,7 @@ export const MODULOS_NAVEGACAO: readonly ModuloNavegacao[] = [
       { href: "/atendimento/mensagens", rotulo: "Mensagens", modulo: "mensagensBot" },
       { href: "/atendimento/configuracoes", rotulo: "Configurações", modulo: "configAtendimento" },
       { href: "/atendimento/logs", rotulo: "Logs", modulo: "logsAtendimento" },
+      { href: "/atendimento/saude", rotulo: "Saúde do sistema", modulo: "atendimento" },
     ],
   },
   {

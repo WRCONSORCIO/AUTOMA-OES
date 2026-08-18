@@ -23,6 +23,7 @@ import type {
 export class ProvedorSimulado implements PaymentProvider {
   readonly nome: ProvedorPagamento = "MANUAL";
   readonly configurado = true;
+  readonly simulado = true;
 
   constructor(private readonly appUrl?: string | null) {}
 

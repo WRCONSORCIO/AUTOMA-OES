@@ -60,6 +60,12 @@ export interface PaymentProvider {
   readonly nome: ProvedorPagamento;
   /** `false` quando falta credencial: o fluxo avisa em vez de cobrar errado. */
   readonly configurado: boolean;
+  /**
+   * `true` no provedor de simulação. O painel usa isso para liberar a
+   * confirmação manual de pagamento — que existe só para desenvolvimento e
+   * jamais deve aparecer com um gateway real ativo.
+   */
+  readonly simulado?: boolean;
 
   createPayment(dados: DadosCobranca): Promise<CobrancaCriada>;
   getPayment(externoId: string): Promise<SituacaoCobranca | null>;
