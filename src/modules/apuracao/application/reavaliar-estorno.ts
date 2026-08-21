@@ -160,3 +160,164 @@ export async function reavaliarEstornos(
   resumo.valorLiberado = Math.round(resumo.valorLiberado * 100) / 100;
   return resumo;
 }
+
+export interface ResumoApuracaoEstornos {
+  canceladasAvaliadas: number;
+  criados: number;
+  atualizados: number;
+  removidos: number;
+  inalterados: number;
+  valorTotal: number;
+  /** Por que uma venda cancelada não gerou cobrança. */
+  semEstorno: {
+    semRegra: number;
+    acimaDoLimiteDeParcelas: number;
+    semComissaoPaga: number;
+  };
+}
+
+/**
+ * Apura o estorno de todas as vendas canceladas.
+ *
+ * O estorno nasce de evento, no momento em que a importação vê o
+ * cancelamento. Isso é certo — mas deixa um buraco: se a regra ainda não
+ * estava cadastrada naquele instante, a decisão foi "não há regra vigente", o
+ * evento foi dado por processado, e nada nunca mais volta a olhar. Cadastrar a
+ * regra depois não produz cobrança nenhuma, e não há erro em lugar algum
+ * dizendo isso.
+ *
+ * É o mesmo caso da comissão, que ganhou "Apurar comissões" pela mesma razão.
+ * Aqui a apuração é sobre o cancelamento: percorre as vendas canceladas,
+ * aplica a regra vigente na data de cada cancelamento, e acerta o que estiver
+ * diferente — criando o que falta, corrigindo o que mudou e removendo o que
+ * deixou de valer.
+ *
+ * Repetir é seguro: o resultado depende só das regras e dos fatos, nunca do
+ * que já estava gravado.
+ */
+export async function apurarEstornos(
+  usuario: ContextoUsuario | null,
+  escopo: { cotaIds?: readonly string[] } = {},
+): Promise<ResumoApuracaoEstornos> {
+  const resumo: ResumoApuracaoEstornos = {
+    canceladasAvaliadas: 0,
+    criados: 0,
+    atualizados: 0,
+    removidos: 0,
+    inalterados: 0,
+    valorTotal: 0,
+    semEstorno: { semRegra: 0, acimaDoLimiteDeParcelas: 0, semComissaoPaga: 0 },
+  };
+
+  const canceladas = await prisma.cota.findMany({
+    where: {
+      situacao: "CANCELADO",
+      dataCancelamento: { not: null },
+      ...(escopo.cotaIds ? { id: { in: [...escopo.cotaIds] } } : {}),
+    },
+    select: {
+      id: true,
+      vendedorEfetivoId: true,
+      emRecuperacao: true,
+      parcelasPagas: true,
+      dataCancelamento: true,
+      categoriaVenda: true,
+      estorno: true,
+    },
+  });
+
+  for (const cota of canceladas) {
+    resumo.canceladasAvaliadas += 1;
+
+    const [regras, valorReferencia] = await Promise.all([
+      regrasDoVendedor(cota.vendedorEfetivoId),
+      comissaoPagaNaCota(cota.id),
+    ]);
+
+    const decisao = avaliarEstorno(
+      {
+        vendedorId: cota.vendedorEfetivoId,
+        emRecuperacao: cota.emRecuperacao,
+        parcelasPagas: cota.parcelasPagas,
+        dataCancelamento: cota.dataCancelamento,
+        valorReferencia,
+        categoriaVenda: cota.categoriaVenda as CategoriaVenda | null,
+      },
+      regras,
+    );
+
+    if (!decisao.gera) {
+      // Os motivos somem do mesmo jeito na tela, mas pedem coisas diferentes:
+      // falta de regra é cadastro, limite de parcelas é a regra funcionando.
+      if (/Sem regra/i.test(decisao.motivo)) resumo.semEstorno.semRegra += 1;
+      else resumo.semEstorno.acimaDoLimiteDeParcelas += 1;
+
+      if (cota.estorno) {
+        await prisma.$transaction([
+          prisma.estorno.delete({ where: { cotaId: cota.id } }),
+          prisma.cota.update({ where: { id: cota.id }, data: { geraEstorno: false } }),
+        ]);
+        resumo.removidos += 1;
+      }
+      continue;
+    }
+
+    // Regra manda estornar, mas não houve comissão paga: não há o que devolver.
+    // Não é erro — é venda cujo pagamento ainda não saiu.
+    if (valorReferencia <= 0) resumo.semEstorno.semComissaoPaga += 1;
+
+    const dados = {
+      tipo: decisao.tipo,
+      motivo: decisao.motivo,
+      parcelasPagasNoCancelamento: cota.parcelasPagas,
+      dataCancelamento: cota.dataCancelamento!,
+      valorReferencia,
+      regraEstornoId: decisao.regraId,
+      percentualAplicado: decisao.percentualAplicado,
+      parcelaLimite: decisao.parcelaLimite,
+      valorEstorno: decisao.valorEstorno,
+    };
+
+    if (!cota.estorno) {
+      await prisma.$transaction([
+        prisma.estorno.create({ data: { cotaId: cota.id, ...dados } }),
+        prisma.cota.update({ where: { id: cota.id }, data: { geraEstorno: true } }),
+      ]);
+      resumo.criados += 1;
+      resumo.valorTotal += decisao.valorEstorno;
+      continue;
+    }
+
+    const igual =
+      Number(cota.estorno.valorEstorno ?? 0) === decisao.valorEstorno &&
+      cota.estorno.tipo === decisao.tipo &&
+      cota.estorno.regraEstornoId === decisao.regraId;
+
+    if (igual) {
+      resumo.inalterados += 1;
+      resumo.valorTotal += decisao.valorEstorno;
+      continue;
+    }
+
+    await prisma.estorno.update({ where: { cotaId: cota.id }, data: dados });
+    resumo.atualizados += 1;
+    resumo.valorTotal += decisao.valorEstorno;
+  }
+
+  resumo.valorTotal = Math.round(resumo.valorTotal * 100) / 100;
+
+  if (usuario) {
+    await registrarAuditoria({
+      acao: "ESTORNO",
+      entidade: "Cota",
+      descricao:
+        `Apuração de estornos sobre ${resumo.canceladasAvaliadas} venda(s) cancelada(s): ` +
+        `${resumo.criados} criado(s), ${resumo.atualizados} atualizado(s), ` +
+        `${resumo.removidos} removido(s). Total ${resumo.valorTotal.toFixed(2)}.`,
+      dadosDepois: resumo,
+      usuario,
+    });
+  }
+
+  return resumo;
+}
