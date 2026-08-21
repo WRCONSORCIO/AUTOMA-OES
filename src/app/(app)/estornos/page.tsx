@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { exigirPermissao } from "@/server/auth/session";
-import { escopoDoUsuario } from "@/server/auth/rbac";
+import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { parseDataBr } from "@/lib/normalize";
 import { formatarMoeda, formatarNumero } from "@/lib/format";
@@ -25,6 +25,7 @@ import {
   estornosPorPessoa,
   totalizarEstornos,
 } from "@/modules/apuracao/infrastructure/queries/estornos-por-pessoa";
+import { BotaoApurarEstornos } from "./formularios";
 
 export const metadata: Metadata = { title: "Estornos" };
 
@@ -42,6 +43,7 @@ export default async function PaginaEstornos({
   searchParams: Promise<ParametrosBusca>;
 }) {
   const sessao = await exigirPermissao("comissoesEquipe");
+  const podeApurar = podeAcessar(sessao.perfil, "comissoesEquipe", "editar");
   const escopo = escopoDoUsuario(sessao);
 
   const brutos = await searchParams;
@@ -50,7 +52,7 @@ export default async function PaginaEstornos({
   const de = brutos.de ? parseDataBr(parametros.de) : undefined;
   const ate = brutos.ate ? parseDataBr(parametros.ate) : undefined;
 
-  const [linhas, gerencias, equipes, pessoas, semRegra] = await Promise.all([
+  const [linhas, gerencias, equipes, pessoas, semRegra, semBase] = await Promise.all([
     estornosPorPessoa({
       de: de ?? undefined,
       ate: ate ?? undefined,
@@ -81,6 +83,11 @@ export default async function PaginaEstornos({
     prisma.cota.count({
       where: { situacao: "CANCELADO", estorno: { is: null } },
     }),
+    // Estorno apurado cuja base é zero: a regra disse para cobrar, mas não há
+    // registro de comissão paga sobre a venda. Para veterano e expert isso
+    // quase sempre significa que o relatório de comissão paga direto ao
+    // vendedor ainda não foi importado — sem ele não há de onde tirar o valor.
+    prisma.estorno.count({ where: { OR: [{ valorReferencia: 0 }, { valorReferencia: null }] } }),
   ]);
 
   const totais = totalizarEstornos(linhas);
@@ -90,6 +97,7 @@ export default async function PaginaEstornos({
       <CabecalhoPagina
         titulo="Estornos"
         descricao="Comissão a devolver por venda cancelada. Os dois motivos são cobranças distintas: recuperação e cancelamento com poucas parcelas pagas."
+        acoes={podeApurar ? <BotaoApurarEstornos /> : undefined}
       />
 
       <FiltrosPeriodo
@@ -130,9 +138,23 @@ export default async function PaginaEstornos({
       {totais.total === 0 && semRegra > 0 ? (
         <Aviso tom="atencao">
           Não há nenhum estorno apurado, mas existem {formatarNumero(semRegra)} venda(s)
-          cancelada(s). Sem regra de estorno vigente para a categoria e a data do cancelamento,
-          o sistema não cobra nada — e é assim de propósito, para nunca cobrar por suposição.
-          Cadastre as regras em Administração → Regras e percentuais.
+          cancelada(s). Duas causas possíveis, e vale checar as duas: pode faltar regra vigente
+          para a categoria e a data do cancelamento — cadastre em{" "}
+          <strong>Administração → Regras e percentuais</strong> — ou as regras podem ter sido
+          cadastradas <strong>depois</strong> da importação, e aí ninguém reavaliou os
+          cancelamentos que já estavam na base. Nesse caso é só clicar em{" "}
+          <strong>Apurar estornos</strong> aqui em cima.
+        </Aviso>
+      ) : null}
+
+      {semBase > 0 ? (
+        <Aviso tom="atencao">
+          {formatarNumero(semBase)} estorno(s) foram apurados com valor <strong>zero</strong>: a
+          regra manda cobrar, mas não há comissão registrada sobre essas vendas para servir de
+          base. O estorno é uma porcentagem do que o vendedor recebeu — sem saber quanto ele
+          recebeu, não há o que devolver. Em venda de veterano ou expert, quem paga é a
+          administradora: importe o relatório de <strong>comissão paga direto ao vendedor</strong>{" "}
+          em Importações e apure de novo.
         </Aviso>
       ) : null}
 
