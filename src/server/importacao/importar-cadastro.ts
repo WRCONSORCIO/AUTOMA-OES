@@ -12,6 +12,7 @@ import {
   type LinhaVendedor,
   type ProblemaLeitura,
 } from "./planilha-cadastro";
+import { resolverEquipe, resolverGerencia } from "./organograma";
 
 /**
  * Importa o cadastro da WR: organograma, identidade e histórico de categoria.
@@ -48,7 +49,8 @@ export type MotivoPendencia =
   | "VENDEDOR_DESCONHECIDO"
   | "GERENCIA_DIVERGENTE"
   | "PESSOA_AMBIGUA"
-  | "SEGUNDO_CPF";
+  | "SEGUNDO_CPF"
+  | "ORGANOGRAMA_AMBIGUO";
 
 export interface Pendencia {
   motivo: MotivoPendencia;
@@ -69,6 +71,11 @@ export interface ResumoCadastro {
   periodosDeCategoria: number;
   /** Vendedores da planilha que casaram com pelo menos um documento. */
   vendedoresConciliados: number;
+  /**
+   * Equipes e gerências abreviadas que foram renomeadas ou absorvidas pelo
+   * nome completo da planilha. Cotas e comissões vieram junto.
+   */
+  organogramaUnificado: string[];
   problemas: ProblemaLeitura[];
   pendencias: Pendencia[];
 }
@@ -132,6 +139,7 @@ export async function importarCadastroXlsx(
       situacoesAtualizadas: alocacoes.situacoes,
       periodosDeCategoria: categorias,
       vendedoresConciliados: documentos.porVendedorDaPlanilha.size,
+      organogramaUnificado: organograma.absorvidas,
       problemas: planilha.problemas,
       pendencias,
     };
@@ -189,6 +197,8 @@ interface Organograma {
   equipePorNome: Map<string, string>;
   gerenciasCriadas: number;
   equipesCriadas: number;
+  /** Entradas abreviadas que viraram, ou foram absorvidas por, o nome completo. */
+  absorvidas: string[];
 }
 
 /**
@@ -209,6 +219,7 @@ async function montarOrganograma(
 ): Promise<Organograma> {
   const gerenciaPorNome = new Map<string, string>();
   const equipePorNome = new Map<string, string>();
+  const absorvidas: string[] = [];
   let gerenciasCriadas = 0;
   let equipesCriadas = 0;
 
@@ -217,15 +228,20 @@ async function montarOrganograma(
   ];
 
   for (const nome of nomesDeGerencia) {
-    const existente = await prisma.gerencia.findUnique({ where: { nome }, select: { id: true } });
-    if (existente) {
-      gerenciaPorNome.set(normalizarTexto(nome), existente.id);
-      continue;
-    }
+    const resolucao = await resolverGerencia(nome);
+    gerenciaPorNome.set(normalizarTexto(nome), resolucao.id);
 
-    const criada = await prisma.gerencia.create({ data: { nome }, select: { id: true } });
-    gerenciaPorNome.set(normalizarTexto(nome), criada.id);
-    gerenciasCriadas += 1;
+    if (resolucao.criada) gerenciasCriadas += 1;
+    if (resolucao.absorveu) absorvidas.push(`gerência "${resolucao.absorveu}" → "${nome}"`);
+    if (resolucao.ambigua) {
+      pendencias.push({
+        motivo: "ORGANOGRAMA_AMBIGUO",
+        referencia: nome,
+        detalhe:
+          `Mais de uma gerência pode ser esta abreviada (${resolucao.ambigua.join(", ")}). ` +
+          `Nenhuma foi fundida — renomeie a certa à mão em Administração → Estrutura.`,
+      });
+    }
   }
 
   // Gerência de cada supervisor: a que aparece em mais linhas dele.
@@ -263,25 +279,25 @@ async function montarOrganograma(
     const gerenciaId = gerenciaPorNome.get(normalizarTexto(gerenteEscolhido));
     if (!gerenciaId) continue;
 
-    const existente = await prisma.equipe.findFirst({
-      where: { nome: linha.supervisor, gerenciaId },
-      select: { id: true },
-    });
+    const resolucao = await resolverEquipe(linha.supervisor, gerenciaId);
+    equipePorNome.set(chave, resolucao.id);
 
-    if (existente) {
-      equipePorNome.set(chave, existente.id);
-      continue;
+    if (resolucao.criada) equipesCriadas += 1;
+    if (resolucao.absorveu) {
+      absorvidas.push(`equipe "${resolucao.absorveu}" → "${linha.supervisor}"`);
     }
-
-    const criada = await prisma.equipe.create({
-      data: { nome: linha.supervisor, gerenciaId },
-      select: { id: true },
-    });
-    equipePorNome.set(chave, criada.id);
-    equipesCriadas += 1;
+    if (resolucao.ambigua) {
+      pendencias.push({
+        motivo: "ORGANOGRAMA_AMBIGUO",
+        referencia: linha.supervisor,
+        detalhe:
+          `Mais de uma equipe pode ser esta abreviada (${resolucao.ambigua.join(", ")}). ` +
+          `Nenhuma foi fundida — renomeie a certa à mão em Administração → Estrutura.`,
+      });
+    }
   }
 
-  return { gerenciaPorNome, equipePorNome, gerenciasCriadas, equipesCriadas };
+  return { gerenciaPorNome, equipePorNome, gerenciasCriadas, equipesCriadas, absorvidas };
 }
 
 // ---------------------------------------------------------------------------

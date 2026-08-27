@@ -67,6 +67,7 @@ interface ResumoCadastro {
   situacoesAtualizadas: number;
   periodosDeCategoria: number;
   vendedoresConciliados: number;
+  organogramaUnificado: string[];
   problemas: ProblemaLeitura[];
   pendencias: Pendencia[];
 }
@@ -472,6 +473,22 @@ function ResumoDoCadastro({ resumo }: { resumo: ResumoCadastro }) {
           destaque={resumo.problemas.length > 0 ? "critico" : undefined}
         />
       </dl>
+
+      {resumo.organogramaUnificado.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-medium">
+            Equipes e gerências unificadas pelo nome completo da planilha
+          </p>
+          <ul className="flex flex-col gap-1 text-sm text-[var(--color-texto-2)]">
+            {resumo.organogramaUnificado.map((item, indice) => (
+              <li key={indice}>{item}</li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-[var(--color-texto-3)]">
+            Cotas, comissões e histórico vieram junto — nada ficou para trás no nome antigo.
+          </p>
+        </div>
+      ) : null}
 
       {resumo.problemas.length > 0 ? (
         <div className="mt-4">
