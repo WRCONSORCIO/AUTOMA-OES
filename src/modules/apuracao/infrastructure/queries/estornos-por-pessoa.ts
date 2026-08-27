@@ -54,10 +54,15 @@ export async function estornosPorPessoa(
 ): Promise<EstornoDaPessoa[]> {
   const condicoes: Prisma.Sql[] = [];
 
-  // A data que importa é a do CANCELAMENTO, não a da venda: é quando a
-  // cobrança nasce, e é por ela que o financeiro fecha o mês.
-  if (filtro.de) condicoes.push(Prisma.sql`e."dataCancelamento" >= ${filtro.de}`);
-  if (filtro.ate) condicoes.push(Prisma.sql`e."dataCancelamento" <= ${filtro.ate}`);
+  // A data que importa é a da COBRANÇA — o dia em que a administradora
+  // debitou a WR no relatório de comissão. Não é a do cancelamento na base de
+  // clientes: o cliente pode sair em julho e o débito só cair em setembro, e é
+  // em setembro que o dinheiro some do caixa e que o financeiro fecha a conta
+  // do vendedor. Estorno antigo, gravado antes desta regra, ainda não tem a
+  // data da cobrança — para ele vale a do cancelamento, para não sumir da tela.
+  const competencia = Prisma.sql`COALESCE(e."dataCobranca", e."dataCancelamento")`;
+  if (filtro.de) condicoes.push(Prisma.sql`${competencia} >= ${filtro.de}`);
+  if (filtro.ate) condicoes.push(Prisma.sql`${competencia} <= ${filtro.ate}`);
   if (filtro.pessoaId) condicoes.push(Prisma.sql`v."pessoaId" = ${filtro.pessoaId}`);
   if (filtro.equipeId) condicoes.push(Prisma.sql`c."equipeId" = ${filtro.equipeId}`);
   if (filtro.gerenciaId) condicoes.push(Prisma.sql`c."gerenciaId" = ${filtro.gerenciaId}`);

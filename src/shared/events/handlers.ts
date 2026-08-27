@@ -1,5 +1,8 @@
 import "server-only";
-import { gerarEstornoHandler } from "@/modules/apuracao/application/handlers/gerar-estorno";
+import {
+  estornoPorLancamentoHandler,
+  gerarEstornoHandler,
+} from "@/modules/apuracao/application/handlers/gerar-estorno";
 import { despachar, type OpcoesDespacho, type ResumoDespacho } from "./despachante";
 import { outboxPrisma } from "./outbox-prisma";
 import { RegistroHandlers } from "./registro";
@@ -14,7 +17,9 @@ import { RegistroHandlers } from "./registro";
  * Para acrescentar uma reação nova, escreva o handler no módulo dono do assunto
  * e registre-o nesta lista. Nada mais precisa mudar.
  */
-const registro = new RegistroHandlers().registrar(gerarEstornoHandler);
+const registro = new RegistroHandlers()
+  .registrar(gerarEstornoHandler)
+  .registrar(estornoPorLancamentoHandler);
 
 export function registroDeHandlers(): RegistroHandlers {
   return registro;

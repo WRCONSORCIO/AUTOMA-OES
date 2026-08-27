@@ -92,6 +92,23 @@ export interface CatalogoEventos {
     readonly vendedorId: string | null;
     readonly parcela: number;
   };
+  /**
+   * A administradora debitou a WR pelo cancelamento de um plano.
+   *
+   * É o fato que autoriza a cobrança do vendedor. Separado de
+   * `carteira.cota.cancelada` porque são momentos distintos: o cliente sai na
+   * base de clientes, e o dinheiro volta no relatório de comissão — às vezes
+   * dois meses depois.
+   */
+  "apuracao.cancelamento.lancado": {
+    readonly comissaoRegistroId: string;
+    readonly cotaId: string;
+    readonly vendedorId: string | null;
+    /** Data do lançamento no relatório — a competência da cobrança. */
+    readonly dataLancamento: string;
+    /** O que a administradora tirou da WR, sempre positivo. */
+    readonly valorDebitado: number;
+  };
   "apuracao.estorno.gerado": {
     readonly estornoId: string;
     readonly cotaId: string;
@@ -136,6 +153,7 @@ export const TIPOS_EVENTO = [
   "comercial.alocacao.alterada",
   "comercial.recuperacao.iniciada",
   "apuracao.comissao.registrada",
+  "apuracao.cancelamento.lancado",
   "apuracao.estorno.gerado",
   "apuracao.bonus.rateado",
   "ingestao.importacao.concluida",
