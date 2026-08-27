@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { lerPlanilha } from "@/server/importacao/xlsx";
+import { ehAbreviacaoDe } from "@/server/importacao/organograma";
 import { lerPlanilhaCadastro } from "@/server/importacao/planilha-cadastro";
 import {
   montarPeriodos,
@@ -175,5 +176,31 @@ describe("períodos de categoria", () => {
     );
 
     expect(periodos.map((p) => p.categoria)).toEqual(["INICIANTE", "VETERANO"]);
+  });
+});
+
+describe("reconhecer a equipe abreviada", () => {
+  it("casa o primeiro nome com o nome completo", () => {
+    // O cadastro antigo foi digitado com o primeiro nome; a planilha traz o
+    // completo. São a mesma equipe, e criar duas partiu a operação ao meio:
+    // as cotas ficavam numa e os vendedores iam para a outra.
+    expect(ehAbreviacaoDe("CHARLES", "CHARLES CARVALHO")).toBe(true);
+    expect(ehAbreviacaoDe("LUCAS", "LUCAS MENEZES MALTA")).toBe(true);
+  });
+
+  it("exige fronteira de palavra", () => {
+    // Prefixo puro casaria ANA com ANANIAS, que são pessoas diferentes.
+    expect(ehAbreviacaoDe("ANA", "ANANIAS SOUZA")).toBe(false);
+    expect(ehAbreviacaoDe("CHARLE", "CHARLES CARVALHO")).toBe(false);
+  });
+
+  it("não casa consigo mesmo nem com nome mais curto", () => {
+    expect(ehAbreviacaoDe("CHARLES CARVALHO", "CHARLES CARVALHO")).toBe(false);
+    expect(ehAbreviacaoDe("CHARLES CARVALHO", "CHARLES")).toBe(false);
+    expect(ehAbreviacaoDe("", "CHARLES")).toBe(false);
+  });
+
+  it("ignora acento e caixa, como o resto do sistema", () => {
+    expect(ehAbreviacaoDe("thayná", "THAYNA HISAYOSHI")).toBe(true);
   });
 });
