@@ -52,7 +52,8 @@ export default async function PaginaEstornos({
   const de = brutos.de ? parseDataBr(parametros.de) : undefined;
   const ate = brutos.ate ? parseDataBr(parametros.ate) : undefined;
 
-  const [linhas, gerencias, equipes, pessoas, semRegra, semBase] = await Promise.all([
+  const [linhas, gerencias, equipes, pessoas, semRegra, semBase, aguardando] =
+    await Promise.all([
     estornosPorPessoa({
       de: de ?? undefined,
       ate: ate ?? undefined,
@@ -77,17 +78,33 @@ export default async function PaginaEstornos({
       select: { id: true, nome: true },
       orderBy: { nome: "asc" },
     }),
-    // Venda cancelada que NÃO gerou estorno. Pode ser correto — a regra pode
-    // dizer que não estorna — mas também é como uma regra faltando se
-    // apresenta, e sem este número ninguém vai olhar.
+    // Venda cancelada, com o débito JÁ lançado pela administradora, que mesmo
+    // assim não gerou estorno. Pode ser correto — a regra pode dizer que não
+    // estorna — mas também é como uma regra faltando se apresenta, e sem este
+    // número ninguém vai olhar. As que ainda não têm débito lançado ficam de
+    // fora de propósito: não são problema, são espera.
     prisma.cota.count({
-      where: { situacao: "CANCELADO", estorno: { is: null } },
+      where: {
+        situacao: "CANCELADO",
+        estorno: { is: null },
+        comissoes: { some: { tipo: "CANCELAMENTO_DE_PLANO" } },
+      },
     }),
     // Estorno apurado cuja base é zero: a regra disse para cobrar, mas não há
     // registro de comissão paga sobre a venda. Para veterano e expert isso
     // quase sempre significa que o relatório de comissão paga direto ao
     // vendedor ainda não foi importado — sem ele não há de onde tirar o valor.
     prisma.estorno.count({ where: { OR: [{ valorReferencia: 0 }, { valorReferencia: null }] } }),
+    // Cancelada na base de clientes, sem o débito no relatório de comissão.
+    // Não é erro nem cadastro faltando: a administradora ainda não devolveu a
+    // cobrança à WR, e até lá não há perda para repassar ao vendedor. Aparece
+    // na tela para que a espera seja visível — senão vira "sumiu um estorno".
+    prisma.cota.count({
+      where: {
+        situacao: "CANCELADO",
+        comissoes: { none: { tipo: "CANCELAMENTO_DE_PLANO" } },
+      },
+    }),
   ]);
 
   const totais = totalizarEstornos(linhas);
@@ -96,7 +113,7 @@ export default async function PaginaEstornos({
     <>
       <CabecalhoPagina
         titulo="Estornos"
-        descricao="Comissão a devolver por venda cancelada. Os dois motivos são cobranças distintas: recuperação e cancelamento com poucas parcelas pagas."
+        descricao="Comissão a devolver por venda cancelada. O mês é o do CANCELAMENTO DE PLANO no relatório da administradora — o dia em que o dinheiro saiu da WR —, não o do cancelamento na base de clientes."
         acoes={podeApurar ? <BotaoApurarEstornos /> : undefined}
       />
 
@@ -128,21 +145,20 @@ export default async function PaginaEstornos({
           detalhe="Cancelamento com parcelas pagas abaixo do limite da regra"
         />
         <Indicador
-          rotulo="Canceladas sem estorno"
-          valor={formatarNumero(semRegra)}
-          detalhe="Confira se falta regra cadastrada"
-          tom={semRegra > 0 ? "atencao" : "neutro"}
+          rotulo="Aguardando a administradora"
+          valor={formatarNumero(aguardando)}
+          detalhe="Canceladas na base, sem CANCELAMENTO DE PLANO no relatório ainda"
         />
       </section>
 
-      {totais.total === 0 && semRegra > 0 ? (
+      {semRegra > 0 ? (
         <Aviso tom="atencao">
-          Não há nenhum estorno apurado, mas existem {formatarNumero(semRegra)} venda(s)
-          cancelada(s). Duas causas possíveis, e vale checar as duas: pode faltar regra vigente
-          para a categoria e a data do cancelamento — cadastre em{" "}
-          <strong>Administração → Regras e percentuais</strong> — ou as regras podem ter sido
-          cadastradas <strong>depois</strong> da importação, e aí ninguém reavaliou os
-          cancelamentos que já estavam na base. Nesse caso é só clicar em{" "}
+          {formatarNumero(semRegra)} venda(s) já tiveram o <strong>CANCELAMENTO DE PLANO</strong>{" "}
+          lançado pela administradora e mesmo assim não geraram estorno. Duas causas possíveis, e
+          vale checar as duas: pode faltar regra vigente para a categoria da venda e a data do
+          cancelamento — cadastre em <strong>Administração → Regras e percentuais</strong> — ou as
+          regras podem ter sido cadastradas <strong>depois</strong> da importação, e aí ninguém
+          reavaliou os cancelamentos que já estavam na base. Nesse caso é só clicar em{" "}
           <strong>Apurar estornos</strong> aqui em cima.
         </Aviso>
       ) : null}

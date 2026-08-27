@@ -11,12 +11,16 @@ export interface EstadoAcao {
 }
 
 /**
- * Reaplica as regras de estorno sobre todas as vendas canceladas.
+ * Reaplica as regras de estorno sobre as vendas canceladas.
  *
  * Necessário porque o estorno nasce de evento, no momento da importação: se a
  * regra não estava cadastrada naquele instante, nenhuma cobrança foi criada e
  * nada volta a olhar sozinho. Cadastrar a regra depois não produz efeito até
  * alguém apurar.
+ *
+ * A cobrança só existe onde a administradora já lançou o CANCELAMENTO DE PLANO
+ * no relatório de comissão da WR. As demais canceladas aparecem no resumo como
+ * "aguardando lançamento" — não são erro, é o débito que ainda não chegou.
  */
 export async function acaoApurarEstornos(
   _anterior: EstadoAcao,
@@ -46,6 +50,11 @@ export async function acaoApurarEstornos(
           `${formatarNumero(resumo.semEstorno.acimaDoLimiteDeParcelas)} com parcelas pagas acima do limite da regra`,
         );
       }
+      if (resumo.semEstorno.aguardandoLancamento > 0) {
+        partes.push(
+          `${formatarNumero(resumo.semEstorno.aguardandoLancamento)} aguardando o CANCELAMENTO DE PLANO no relatório da administradora`,
+        );
+      }
       if (resumo.inalterados > 0) {
         partes.push(`${formatarNumero(resumo.inalterados)} já estavam corretos`);
       }
@@ -62,7 +71,8 @@ export async function acaoApurarEstornos(
         `${formatarNumero(resumo.canceladasAvaliadas)} venda(s) cancelada(s) avaliadas: ` +
         `${formatarNumero(resumo.criados)} estorno(s) criado(s), ` +
         `${formatarNumero(resumo.atualizados)} atualizado(s), ` +
-        `${formatarNumero(resumo.removidos)} removido(s). ` +
+        `${formatarNumero(resumo.removidos)} removido(s), ` +
+        `${formatarNumero(resumo.semEstorno.aguardandoLancamento)} aguardando lançamento da administradora. ` +
         `Total a estornar: ${formatarMoeda(resumo.valorTotal)}.`,
     };
   } catch (erro) {

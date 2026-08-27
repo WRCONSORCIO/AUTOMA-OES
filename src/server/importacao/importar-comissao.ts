@@ -476,6 +476,29 @@ async function gravarRegistro(entrada: EntradaGravacao): Promise<ResultadoGravac
       );
     }
 
+    // CANCELAMENTO DE PLANO é o débito: a administradora tirando da WR o que
+    // já havia pago. É ele — e não o cancelamento na base de clientes — que
+    // faz nascer a cobrança do vendedor, porque é quando a perda acontece.
+    // O cliente pode ter saído meses antes; enquanto o débito não chega, não
+    // há o que estornar.
+    if (cota && registro.tipo === "CANCELAMENTO_DE_PLANO") {
+      eventos.push(
+        evento(
+          "apuracao.cancelamento.lancado",
+          "Cota",
+          cota.id,
+          {
+            comissaoRegistroId: gravado.id,
+            cotaId: cota.id,
+            vendedorId: efetivo.vendedorId,
+            dataLancamento: dataReferencia.toISOString().slice(0, 10),
+            valorDebitado: Math.abs(registro.valorComissao),
+          },
+          entrada.metadados,
+        ),
+      );
+    }
+
     await publicar(tx, eventos);
   });
 

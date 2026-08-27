@@ -683,17 +683,32 @@ model Estorno {
   /// valorReferencia × percentualAplicado.
   valorEstorno       Decimal? @db.Decimal(18, 2)
 
+  /// Data em que a administradora lançou o CANCELAMENTO DE PLANO no relatório
+  /// de comissão da WR — a competência da cobrança.
+  ///
+  /// Não é a mesma coisa que `dataCancelamento`, que vem da base de clientes.
+  /// O cliente pode cancelar em julho e a administradora só debitar a WR em
+  /// setembro; é o débito que define em qual mês o estorno é cobrado do
+  /// vendedor, porque é quando o dinheiro efetivamente sai.
+  dataCobranca DateTime? @db.Date
+  /// Linha do relatório que originou a cobrança. É a prova documental do
+  /// estorno: sem ela não há débito, e portanto não há o que cobrar.
+  comissaoRegistroId String?
+
   /// Importação que trouxe o cancelamento. Responde "esta importação gerou
   /// quais estornos" sem precisar adivinhar por janela de tempo.
   importacaoId String?
 
-  cota       Cota          @relation(fields: [cotaId], references: [id])
-  regra      RegraEstorno? @relation(fields: [regraEstornoId], references: [id])
-  importacao Importacao?   @relation(fields: [importacaoId], references: [id])
+  cota            Cota              @relation(fields: [cotaId], references: [id])
+  regra           RegraEstorno?     @relation(fields: [regraEstornoId], references: [id])
+  importacao      Importacao?       @relation(fields: [importacaoId], references: [id])
+  comissaoRegistro ComissaoRegistro? @relation(fields: [comissaoRegistroId], references: [id])
 
   @@index([dataCancelamento])
   @@index([tipo, dataCancelamento])
+  @@index([dataCobranca])
   @@index([importacaoId])
+  @@index([comissaoRegistroId])
 }
 
 // ---------------------------------------------------------------------------
@@ -763,6 +778,7 @@ model ComissaoRegistro {
   gerencia       Gerencia?      @relation(fields: [gerenciaId], references: [id])
 
   comissaoWr ComissaoWr?
+  estornos   Estorno[]
 
   @@index([dataReferencia])
   @@index([tipo, dataReferencia])

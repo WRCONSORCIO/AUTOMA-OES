@@ -75,3 +75,61 @@ export async function comissaoPagaNaCota(cotaId: string): Promise<number> {
 
   return wr + adm;
 }
+
+/** O débito de cancelamento que a administradora lançou contra a WR. */
+export interface LancamentoDeCancelamento {
+  readonly comissaoRegistroId: string;
+  /** Data do lançamento no relatório — a competência da cobrança. */
+  readonly dataLancamento: Date;
+  /** O que a administradora tirou da WR nessa linha, sempre positivo. */
+  readonly valorDebitado: number;
+}
+
+/**
+ * O lançamento de CANCELAMENTO DE PLANO da cota, se a administradora já o fez.
+ *
+ * O cancelamento tem duas datas, e elas não coincidem. A base de clientes diz
+ * quando o cliente saiu; o relatório de comissão diz quando a administradora
+ * cobrou a WR de volta — e pode levar meses. Quem manda na cobrança é o
+ * relatório: enquanto o débito não aparece nele, a WR não perdeu nada e não há
+ * o que cobrar do vendedor.
+ *
+ * Havendo mais de um lançamento para a mesma cota — reapresentação, ajuste —
+ * vale o mais ANTIGO: é ele que marca o mês em que o dinheiro saiu.
+ */
+export async function lancamentosDeCancelamento(
+  cotaIds: readonly string[],
+): Promise<Map<string, LancamentoDeCancelamento>> {
+  const mapa = new Map<string, LancamentoDeCancelamento>();
+  if (cotaIds.length === 0) return mapa;
+
+  const linhas = await prisma.comissaoRegistro.findMany({
+    where: { cotaId: { in: [...cotaIds] }, tipo: "CANCELAMENTO_DE_PLANO" },
+    select: { id: true, cotaId: true, dataReferencia: true, valorComissao: true },
+    orderBy: { dataReferencia: "asc" },
+  });
+
+  for (const linha of linhas) {
+    if (!linha.cotaId || mapa.has(linha.cotaId)) continue;
+    mapa.set(linha.cotaId, {
+      comissaoRegistroId: linha.id,
+      dataLancamento: linha.dataReferencia,
+      // Chega negativo no relatório, porque é devolução. O sinal já disse o
+      // que precisava dizer; o valor em si é uma grandeza.
+      valorDebitado: Math.abs(Number(linha.valorComissao ?? 0)),
+    });
+  }
+
+  return mapa;
+}
+
+/** Cotas que já têm débito de cancelamento lançado pela administradora. */
+export async function cotasComCancelamentoLancado(): Promise<string[]> {
+  const linhas = await prisma.comissaoRegistro.findMany({
+    where: { tipo: "CANCELAMENTO_DE_PLANO", cotaId: { not: null } },
+    select: { cotaId: true },
+    distinct: ["cotaId"],
+  });
+
+  return linhas.map((linha) => linha.cotaId!).filter(Boolean);
+}
