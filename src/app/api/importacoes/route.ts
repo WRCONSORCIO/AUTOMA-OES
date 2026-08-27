@@ -7,6 +7,7 @@ import { importarBaseCsv } from "@/server/importacao/importar-base";
 import { importarComissaoPdf } from "@/server/importacao/importar-comissao";
 import { importarBonusPdf } from "@/server/importacao/importar-bonus";
 import { importarComissaoVendedorPdf } from "@/server/importacao/importar-comissao-vendedor";
+import { importarCadastroXlsx } from "@/server/importacao/importar-cadastro";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -33,7 +34,11 @@ export async function POST(requisicao: Request) {
   if (!(arquivo instanceof File)) {
     return NextResponse.json({ erro: "Selecione um arquivo." }, { status: 400 });
   }
-  if (!administradoraId) {
+  // O cadastro é da WR, não de uma administradora: exigir a escolha aqui
+  // pediria uma informação que a planilha não tem e que não seria usada.
+  const exigeAdministradora = tipo !== "CADASTRO_XLSX";
+
+  if (exigeAdministradora && !administradoraId) {
     return NextResponse.json({ erro: "Selecione a administradora." }, { status: 400 });
   }
 
@@ -45,12 +50,14 @@ export async function POST(requisicao: Request) {
     );
   }
 
-  const administradora = await prisma.administradora.findUnique({
-    where: { id: administradoraId },
-    select: { id: true },
-  });
-  if (!administradora) {
-    return NextResponse.json({ erro: "Administradora não encontrada." }, { status: 400 });
+  if (exigeAdministradora) {
+    const administradora = await prisma.administradora.findUnique({
+      where: { id: administradoraId },
+      select: { id: true },
+    });
+    if (!administradora) {
+      return NextResponse.json({ erro: "Administradora não encontrada." }, { status: 400 });
+    }
   }
 
   const conteudo = Buffer.from(await arquivo.arrayBuffer());
@@ -92,6 +99,15 @@ export async function POST(requisicao: Request) {
         arquivo: conteudo,
         nomeArquivo: arquivo.name,
         administradoraId,
+        usuario,
+      });
+      return NextResponse.json({ tipo, resumo });
+    }
+
+    if (tipo === "CADASTRO_XLSX") {
+      const resumo = await importarCadastroXlsx({
+        arquivo: conteudo,
+        nomeArquivo: arquivo.name,
         usuario,
       });
       return NextResponse.json({ tipo, resumo });
