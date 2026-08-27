@@ -94,6 +94,9 @@ enum TipoImportacao {
   COMISSAO_PDF
   BONUS_PDF
   COMISSAO_VENDEDOR_PDF
+  /// Planilha de cadastro da WR: organograma, de-para de nomes e histórico de
+  /// categoria. É a única importação que não vem da administradora.
+  CADASTRO_XLSX
 }
 
 enum StatusImportacao {

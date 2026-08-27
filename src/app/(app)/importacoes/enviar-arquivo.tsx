@@ -44,6 +44,33 @@ interface ResumoBonus {
   divergenciaLeitura: number | null;
 }
 
+interface ProblemaLeitura {
+  aba: string;
+  numeroLinha: number;
+  mensagem: string;
+}
+
+interface Pendencia {
+  motivo: string;
+  referencia: string;
+  detalhe: string;
+}
+
+interface ResumoCadastro {
+  totalLinhas: number;
+  gerenciasCriadas: number;
+  equipesCriadas: number;
+  pessoasCriadas: number;
+  pessoasExistentes: number;
+  documentosVinculados: number;
+  alocacoesAtualizadas: number;
+  situacoesAtualizadas: number;
+  periodosDeCategoria: number;
+  vendedoresConciliados: number;
+  problemas: ProblemaLeitura[];
+  pendencias: Pendencia[];
+}
+
 interface ResumoComissaoVendedor {
   totalRegistros: number;
   criados: number;
@@ -60,7 +87,8 @@ type Resposta =
   | { tipo: "COMISSAO_VENDEDOR_PDF"; resumo: ResumoComissaoVendedor }
   | { tipo: "BASE_CSV"; resumo: ResumoBase }
   | { tipo: "COMISSAO_PDF"; resumo: ResumoComissao }
-  | { tipo: "BONUS_PDF"; resumo: ResumoBonus };
+  | { tipo: "BONUS_PDF"; resumo: ResumoBonus }
+  | { tipo: "CADASTRO_XLSX"; resumo: ResumoCadastro };
 
 export function EnviarArquivo({
   administradoras,
@@ -73,6 +101,7 @@ export function EnviarArquivo({
   const [erro, setErro] = useState<string | null>(null);
   const [resposta, setResposta] = useState<Resposta | null>(null);
   const [tipo, setTipo] = useState("BASE_CSV");
+  const cadastro = tipo === "CADASTRO_XLSX";
 
   async function enviar(evento: React.FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -132,11 +161,20 @@ export function EnviarArquivo({
                   Comissão paga direto ao vendedor (PDF)
                 </option>
                 <option value="BONUS_PDF">Bônus de incentivo da WR (PDF)</option>
+                <option value="CADASTRO_XLSX">Cadastro de vendedores da WR (Excel)</option>
               </Selecao>
             </Campo>
 
-            <Campo rotulo="Administradora">
-              <Selecao name="administradoraId" required defaultValue={administradoras[0]?.id ?? ""}>
+            <Campo
+              rotulo="Administradora"
+              dica={cadastro ? "Não se aplica: o cadastro é da WR" : undefined}
+            >
+              <Selecao
+                name="administradoraId"
+                required={!cadastro}
+                disabled={cadastro}
+                defaultValue={administradoras[0]?.id ?? ""}
+              >
                 {administradoras.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.nome}
@@ -147,21 +185,36 @@ export function EnviarArquivo({
 
             <Campo
               rotulo="Arquivo"
-              dica={tipo === "BASE_CSV" ? "Arquivo .csv da administradora" : "Fechamento em .pdf"}
+              dica={
+                cadastro
+                  ? "Planilha .xlsx com as abas VENDEDORES, HISTORICO CATEGORIA e NOMES DE CADASTRO"
+                  : tipo === "BASE_CSV"
+                    ? "Arquivo .csv da administradora"
+                    : "Fechamento em .pdf"
+              }
             >
               <Entrada
                 type="file"
                 name="arquivo"
                 required
-                accept={tipo === "BASE_CSV" ? ".csv,text/csv" : ".pdf,application/pdf"}
+                accept={
+                  cadastro
+                    ? ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    : tipo === "BASE_CSV"
+                      ? ".csv,text/csv"
+                      : ".pdf,application/pdf"
+                }
                 className="pt-2 file:mr-3 file:rounded-md file:border-0 file:bg-[var(--color-superficie-3)] file:px-3 file:py-1 file:text-sm"
               />
             </Campo>
           </div>
 
           <div>
-            <Botao type="submit" disabled={enviando || administradoras.length === 0}>
-              {tipo === "BASE_CSV" ? (
+            <Botao
+              type="submit"
+              disabled={enviando || (!cadastro && administradoras.length === 0)}
+            >
+              {tipo === "BASE_CSV" || cadastro ? (
                 <FileSpreadsheet className="h-4 w-4" />
               ) : (
                 <FileText className="h-4 w-4" />
@@ -183,6 +236,9 @@ export function EnviarArquivo({
           {resposta?.tipo === "BONUS_PDF" ? <ResumoDoBonus resumo={resposta.resumo} /> : null}
           {resposta?.tipo === "COMISSAO_VENDEDOR_PDF" ? (
             <ResumoDaComissaoVendedor resumo={resposta.resumo} />
+          ) : null}
+          {resposta?.tipo === "CADASTRO_XLSX" ? (
+            <ResumoDoCadastro resumo={resposta.resumo} />
           ) : null}
         </form>
       </CardContent>
@@ -373,6 +429,82 @@ function ResumoDaComissaoVendedor({ resumo }: { resumo: ResumoComissaoVendedor }
           destaque={resumo.semVendedorCadastrado > 0 ? "atencao" : undefined}
         />
       </dl>
+    </div>
+  );
+}
+
+/**
+ * Resumo do cadastro.
+ *
+ * As pendências aparecem inteiras, e não como contagem. Cada uma é um vendedor
+ * cuja comissão vai sair errada até alguém agir, e o nome dele é a única coisa
+ * que torna isso acionável — "12 pendências" não diz a ninguém o que fazer.
+ */
+function ResumoDoCadastro({ resumo }: { resumo: ResumoCadastro }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-borda)] bg-[var(--color-superficie-3)] p-4">
+      <p className="mb-3 text-sm font-medium">Resumo da importação</p>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        <Item rotulo="Pessoas criadas" valor={formatarNumero(resumo.pessoasCriadas)} destaque="bom" />
+        <Item rotulo="Pessoas já existentes" valor={formatarNumero(resumo.pessoasExistentes)} />
+        <Item
+          rotulo="Documentos vinculados"
+          valor={formatarNumero(resumo.documentosVinculados)}
+          destaque="bom"
+        />
+        <Item rotulo="Gerências criadas" valor={formatarNumero(resumo.gerenciasCriadas)} />
+        <Item rotulo="Equipes criadas" valor={formatarNumero(resumo.equipesCriadas)} />
+        <Item rotulo="Alocações aplicadas" valor={formatarNumero(resumo.alocacoesAtualizadas)} />
+        <Item rotulo="Situações atualizadas" valor={formatarNumero(resumo.situacoesAtualizadas)} />
+        <Item
+          rotulo="Períodos de categoria"
+          valor={formatarNumero(resumo.periodosDeCategoria)}
+          destaque="bom"
+        />
+        <Item
+          rotulo="Pendências"
+          valor={formatarNumero(resumo.pendencias.length)}
+          destaque={resumo.pendencias.length > 0 ? "atencao" : undefined}
+        />
+        <Item
+          rotulo="Erros de preenchimento"
+          valor={formatarNumero(resumo.problemas.length)}
+          destaque={resumo.problemas.length > 0 ? "critico" : undefined}
+        />
+      </dl>
+
+      {resumo.problemas.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-medium text-[var(--color-critico)]">
+            Erros de preenchimento na planilha
+          </p>
+          <ul className="flex flex-col gap-1 text-sm text-[var(--color-texto-2)]">
+            {resumo.problemas.map((problema, indice) => (
+              <li key={indice}>
+                <span className="font-medium">
+                  {problema.aba}, linha {problema.numeroLinha}:
+                </span>{" "}
+                {problema.mensagem}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {resumo.pendencias.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-medium text-[var(--color-atencao)]">
+            Pendências — o cadastro entrou, mas estes pontos ficaram em aberto
+          </p>
+          <ul className="flex flex-col gap-1 text-sm text-[var(--color-texto-2)]">
+            {resumo.pendencias.map((pendencia, indice) => (
+              <li key={indice}>
+                <span className="font-medium">{pendencia.referencia}:</span> {pendencia.detalhe}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
