@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CategoriaVendedor, Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type CategoriaVendedor, type PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { resolverCategoriaNaData } from "@/server/domain/regras";
 import {
@@ -424,7 +424,36 @@ export async function vincularDocumentos(
     usuario,
   });
 
+  await sincronizarPessoaDasComissoes(entrada.vendedorIds);
+
   return { pessoaId: destinoId, documentosVinculados: vendedores.length };
+}
+
+/**
+ * Aponta as linhas de comissão do vendedor para a pessoa que ele tem HOJE.
+ *
+ * `ComissaoEquipe.pessoaId` é gravado na apuração e nunca revisto. Vincular
+ * dois documentos à mesma pessoa depois disso deixava o dinheiro dela partido
+ * em duas identidades na tela de comissões da equipe, que agrupa por esse
+ * campo — a carteira aparecia unificada e o pagamento, não.
+ *
+ * Só o papel VENDEDOR tem pessoa: supervisão e gerência são unidades.
+ */
+async function sincronizarPessoaDasComissoes(
+  vendedorIds: readonly string[],
+): Promise<void> {
+  if (vendedorIds.length === 0) return;
+
+  await prisma.$executeRaw`
+    UPDATE "ComissaoEquipe" AS ce
+       SET "pessoaId" = v."pessoaId"
+      FROM "Cota" AS c
+      JOIN "Vendedor" AS v ON v."id" = c."vendedorEfetivoId"
+     WHERE ce."cotaId" = c."id"
+       AND ce."papel" = 'VENDEDOR'
+       AND v."id" IN (${Prisma.join([...vendedorIds])})
+       AND ce."pessoaId" IS DISTINCT FROM v."pessoaId"
+  `;
 }
 
 /**
@@ -485,6 +514,11 @@ export async function separarDocumento(
     dadosDepois: { pessoaId: novaPessoaId, motivo },
     usuario,
   });
+
+  // Mesma razão do vínculo, na direção contrária: sem isto a comissão do
+  // documento separado continuaria creditada à pessoa de quem ele acabou de
+  // sair.
+  await sincronizarPessoaDasComissoes([vendedor.id]);
 
   return { pessoaId: novaPessoaId };
 }
