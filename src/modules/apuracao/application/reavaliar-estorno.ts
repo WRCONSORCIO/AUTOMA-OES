@@ -7,15 +7,15 @@ import {
   type ResumoApuracaoEstornos,
 } from "../domain/rules/apuracao-estorno";
 import {
-  religarComissaoVendedorAdm,
-  type ResumoReligacao,
-} from "@/server/services/comissao-vendedor-adm";
+  religarLancamentos,
+  type ResumoReligacaoGeral,
+} from "@/server/services/religar-lancamentos";
 import { cotasComCancelamentoLancado } from "../infrastructure/repositories/regras-estorno";
 import { sincronizarEstornos } from "./sincronizar-estorno";
 
 export type ResumoApuracao = ResumoApuracaoEstornos & {
-  /** Linhas do CV069E que estavam soltas e voltaram a apontar para a venda. */
-  religacao: ResumoReligacao;
+  /** Lançamentos que estavam soltos e voltaram a apontar para a venda. */
+  religacao: ResumoReligacaoGeral;
 };
 
 export type { ResumoApuracaoEstornos };
@@ -111,12 +111,12 @@ export async function apurarEstornos(
   usuario: ContextoUsuario | null,
   escopo: { cotaIds?: readonly string[] } = {},
 ): Promise<ResumoApuracao> {
-  // Antes de qualquer conta: religar as linhas de comissão paga direto ao
-  // vendedor que ficaram soltas da cota. É a base do estorno de veterano e
-  // expert, e linha órfã faz a cobrança sair zerada sem nada parecer errado.
-  // Vem primeiro porque apurar sobre uma base incompleta grava valores que
-  // teriam de ser refeitos logo em seguida.
-  const religacao = await religarComissaoVendedorAdm();
+  // Antes de qualquer conta: religar à venda os lançamentos que foram
+  // importados antes dela existir. Vem primeiro porque tudo o que esta função
+  // decide depende desses vínculos — o CANCELAMENTO DE PLANO solto faz o
+  // estorno nem nascer, e a comissão solta faz a base sair zerada. Apurar
+  // antes de religar gravaria valores que teriam de ser refeitos em seguida.
+  const religacao = await religarLancamentos();
 
   const alvo = new Set<string>(escopo.cotaIds ?? []);
 

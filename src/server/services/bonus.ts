@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { registrarAuditoria } from "./auditoria";
+import { religarLancamentos } from "./religar-lancamentos";
 import type { ContextoUsuario } from "./vendedores";
 
 /**
@@ -53,6 +54,12 @@ export async function reapurarBonus(
     semGerencia: 0,
     peloVendedor: 0,
   };
+
+  // Religa primeiro o que está solto — inclusive nas outras tabelas, porque a
+  // reapuração do bônus é uma das duas portas por onde o usuário passa e não
+  // faz sentido consertar só um terço do problema por causa de qual botão ele
+  // clicou.
+  await religarLancamentos();
 
   const lancamentos = await prisma.bonusIncentivo.findMany({
     select: {
