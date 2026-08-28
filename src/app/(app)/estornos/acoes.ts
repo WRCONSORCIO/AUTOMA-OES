@@ -34,8 +34,14 @@ export async function acaoApurarEstornos(
     revalidatePath("/estornos");
     revalidatePath("/clientes");
 
+    const religou =
+      resumo.religacao.religadas > 0
+        ? `${formatarNumero(resumo.religacao.religadas)} linha(s) de comissão paga ao vendedor ` +
+          `voltaram a apontar para a venda. `
+        : "";
+
     if (resumo.canceladasAvaliadas === 0) {
-      return { sucesso: "Não há vendas canceladas para avaliar." };
+      return { sucesso: `${religou}Não há vendas canceladas para avaliar.` };
     }
 
     if (resumo.criados === 0 && resumo.atualizados === 0 && resumo.removidos === 0) {
@@ -61,6 +67,7 @@ export async function acaoApurarEstornos(
 
       return {
         sucesso:
+          religou +
           `${formatarNumero(resumo.canceladasAvaliadas)} venda(s) cancelada(s) avaliadas, nada mudou` +
           (partes.length > 0 ? `: ${partes.join(", ")}.` : "."),
       };
@@ -68,6 +75,7 @@ export async function acaoApurarEstornos(
 
     return {
       sucesso:
+        religou +
         `${formatarNumero(resumo.canceladasAvaliadas)} venda(s) cancelada(s) avaliadas: ` +
         `${formatarNumero(resumo.criados)} estorno(s) criado(s), ` +
         `${formatarNumero(resumo.atualizados)} atualizado(s), ` +
