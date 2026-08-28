@@ -1,9 +1,14 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { CalendarClock } from "lucide-react";
 import { Badge, Botao, Campo, Entrada, Selecao } from "@/components/ui";
 import { BotaoAcao, MensagemAcao, type EstadoAcao } from "@/components/formulario-acao";
-import { acaoEncerrarRegraEstorno, acaoSalvarRegraEstorno } from "./estorno-acoes";
+import {
+  acaoAjustarVigenciaDasRegras,
+  acaoEncerrarRegraEstorno,
+  acaoSalvarRegraEstorno,
+} from "./estorno-acoes";
 
 export interface RegraEstornoView {
   id: string;
@@ -263,5 +268,34 @@ export function NovaRegraEstorno({ vendedores }: { vendedores: OpcaoVendedor[] }
       <p className="mb-3 font-medium">Nova regra de estorno</p>
       <FormularioRegraEstorno vendedores={vendedores} aoFechar={() => setAberto(false)} />
     </div>
+  );
+}
+
+/**
+ * Recua a vigência das regras de estorno até a venda mais antiga.
+ *
+ * Mesmo problema dos percentuais de comissão, e mesma solução: a tela pede uma
+ * data de vigência, mas quem cadastra a regra depois de já ter importado a base
+ * — que é a ordem natural — põe a data de hoje sem perceber que, com isso, a
+ * regra não alcança cancelamento nenhum do histórico.
+ */
+export function BotaoAjustarVigenciaDasRegras() {
+  const [estado, despachar] = useActionState<EstadoAcao, FormData>(
+    acaoAjustarVigenciaDasRegras,
+    {},
+  );
+
+  return (
+    <form action={despachar} className="flex flex-wrap items-center gap-3">
+      <BotaoAcao variante="secundario">
+        <CalendarClock className="h-4 w-4" />
+        Aplicar aos cancelamentos já importados
+      </BotaoAcao>
+      <span className="max-w-md text-xs text-[var(--color-texto-3)]">
+        Recua a vigência até a venda mais antiga da base. Não altera percentual nem limite de
+        parcelas.
+      </span>
+      <MensagemAcao estado={estado} />
+    </form>
   );
 }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Prisma } from "@prisma/client";
 import { Gift, TriangleAlert } from "lucide-react";
 import { exigirPermissao } from "@/server/auth/session";
-import { escopoDoUsuario } from "@/server/auth/rbac";
+import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { parseDataBr } from "@/lib/normalize";
 import { formatarMoeda, formatarNumero, formatarPercentual } from "@/lib/format";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui";
 import { Indicador } from "@/components/indicador";
 import { FiltrosPeriodo, lerParametrosFiltro } from "@/components/filtros-periodo";
+import { BotaoReapurarBonus } from "./formularios";
 
 export const metadata: Metadata = { title: "Bônus de incentivo" };
 
@@ -47,6 +48,7 @@ export default async function PaginaBonus({
 }) {
   const sessao = await exigirPermissao("comissoes");
   const escopo = escopoDoUsuario(sessao);
+  const podeReapurar = podeAcessar(sessao.perfil, "comissoes", "editar");
 
   const brutos = await searchParams;
   const parametros = lerParametrosFiltro(brutos, periodoPadrao());
@@ -95,6 +97,7 @@ export default async function PaginaBonus({
       <CabecalhoPagina
         titulo="Bônus de incentivo"
         descricao="O que a administradora paga à WR por incentivo de vendas. Não é repassado a vendedor, equipe nem gerência — o rateio existe para saber de qual gerência veio cada real."
+        acoes={podeReapurar ? <BotaoReapurarBonus /> : undefined}
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -133,10 +136,14 @@ export default async function PaginaBonus({
 
       {semGerencia ? (
         <Aviso tom="atencao">
-          {formatarNumero(semGerencia.cotas)} cota(s) do relatório não estão na base importada, então
-          o bônus delas ainda não tem gerência. O valor continua no total — ele é da WR de qualquer
-          forma. Assim que a base trouxer essas cotas, importe o relatório de novo e elas passam a
-          ser atribuídas.
+          {formatarNumero(semGerencia.cotas)} cota(s) de bônus ainda não têm gerência. O valor
+          continua no total — ele é da WR de qualquer forma —, o que falta é saber de onde veio.
+          A gerência do bônus é copiada da cota <strong>no momento em que o relatório é
+          importado</strong>, e não volta a ser revista: se o relatório entrou antes da base, ou se
+          o vendedor ganhou gerência depois, a atribuição ficou vazia e reimportar não resolve,
+          porque a linha já está gravada. Clique em <strong>Reapurar bônus</strong> aqui em cima —
+          ele procura a cota de novo e copia a gerência de hoje. Se depois disso o número não zerar,
+          são cotas que o relatório traz e a base ainda não tem.
         </Aviso>
       ) : null}
 

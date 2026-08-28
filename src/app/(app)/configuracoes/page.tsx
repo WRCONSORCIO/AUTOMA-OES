@@ -30,7 +30,11 @@ import { carregarTabelasInternas } from "@/server/services/tabelas-internas";
 import { BotaoAjustarVigencia, BotaoSemear, EditorTabela } from "./formularios";
 import { BotaoAlternarFlex, FormularioFlex } from "../tabelas/formularios";
 import { listarRegrasEstorno } from "@/modules/apuracao/application/use-cases/configurar-regra-estorno";
-import { LinhaRegraEstorno, NovaRegraEstorno } from "./estorno-formularios";
+import {
+  BotaoAjustarVigenciaDasRegras,
+  LinhaRegraEstorno,
+  NovaRegraEstorno,
+} from "./estorno-formularios";
 import { listarMetas } from "@/modules/comercial/application/use-cases/configurar-metas";
 import { LinhaMeta, NovaMeta } from "./metas-formularios";
 
@@ -127,6 +131,15 @@ export default async function PaginaConfiguracoes({
 
   const semNenhuma = tabelas.length === 0;
   const algumaAtrasada = quadros.some((quadro) => quadro.atrasada);
+
+  // Regra cujo período aberto começa depois da venda mais antiga: ela não
+  // alcança os cancelamentos que já estão na base, e a apuração vai responder
+  // "sem regra vigente" para eles sem que nada na tela explique por quê.
+  const algumaRegraAtrasada =
+    vendaMaisAntiga !== null &&
+    regrasEstorno.some(
+      (regra) => regra.vigenteAte === null && new Date(regra.vigenteDe) > vendaMaisAntiga,
+    );
 
   return (
     <>
@@ -300,9 +313,10 @@ export default async function PaginaConfiguracoes({
         <>
           <Aviso tom="marca">
             Só existem <strong>duas</strong> situações de estorno: venda feita em
-            período de recuperação, e cancelamento com uma parcela paga — este
-            último apenas nas vendas do documento veterano. Fora disso, nada é
-            cobrado do vendedor.
+            período de recuperação, e cancelamento com poucas parcelas pagas.
+            Quais categorias de venda cada uma alcança é o que as caixas de
+            seleção da regra definem. Fora dessas duas, nada é cobrado do
+            vendedor.
           </Aviso>
 
           <Aviso tom="atencao">
@@ -311,6 +325,21 @@ export default async function PaginaConfiguracoes({
             cancelamento é sempre julgado pela regra que valia no dia em que
             aconteceu.
           </Aviso>
+
+          {algumaRegraAtrasada ? (
+            <Aviso tom="atencao">
+              Há regra cuja vigência começa <strong>depois</strong> de vendas que já estão na base.
+              A regra é escolhida pela data do cancelamento, então nenhum cancelamento anterior a
+              essa data encontra regra — e a apuração responde &quot;sem regra vigente&quot; sem
+              cobrar ninguém. É o que acontece quando a regra é cadastrada depois da importação,
+              que é a ordem natural das coisas.
+              {podeEditar ? (
+                <span className="mt-3 block">
+                  <BotaoAjustarVigenciaDasRegras />
+                </span>
+              ) : null}
+            </Aviso>
+          ) : null}
 
           {podeEditar ? (
             <Card>

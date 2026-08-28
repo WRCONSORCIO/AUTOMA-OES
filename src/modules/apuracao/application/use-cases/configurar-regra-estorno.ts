@@ -2,6 +2,7 @@ import "server-only";
 import type { CategoriaVendedor, TipoEstorno } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { registrarAuditoria } from "@/server/services/auditoria";
+import type { ContextoUsuario } from "@/server/services/vendedores";
 import { encerramentoAnterior, inicioDoDia } from "@/shared/domain/periodo";
 
 /**
@@ -189,4 +190,63 @@ export async function encerrarRegraEstorno(
       tx,
     );
   });
+}
+
+/**
+ * Faz as regras já cadastradas valerem desde a venda mais antiga.
+ *
+ * A regra é resolvida pela data do CANCELAMENTO, e um cancelamento anterior ao
+ * início da vigência simplesmente não encontra regra nenhuma: a apuração
+ * responde "sem regra vigente" e não cobra. Quem cadastrou a regra depois de
+ * importar a base — que é o caso normal, porque a base vem primeiro — ficou com
+ * a vigência começando no dia do cadastro, sem alcançar o histórico.
+ *
+ * A âncora é a venda mais antiga, e não o cancelamento mais antigo, porque
+ * cancelamento nunca precede a venda: cobrir desde a primeira venda cobre tudo.
+ *
+ * **Não altera percentual nem limite de parcelas**, só a data a partir da qual
+ * eles contam. E só recua: regra que já cobre a base fica como está.
+ */
+export async function ajustarVigenciaDasRegras(
+  usuario: ContextoUsuario,
+): Promise<{ ajustadas: number; inicio: Date }> {
+  const inicio = await primeiraVendaDaBase();
+
+  // Só o período ABERTO de cada regra é recuado. Período já encerrado responde
+  // por um trecho do passado que alguém fechou de propósito; mexer nele
+  // reescreveria a decisão antiga em vez de estender a atual.
+  const atrasadas = await prisma.regraEstorno.findMany({
+    where: { vigenteAte: null, vigenteDe: { gt: inicio } },
+    select: { id: true, tipo: true, percentual: true, vigenteDe: true, vendedorId: true },
+  });
+
+  if (atrasadas.length === 0) return { ajustadas: 0, inicio };
+
+  await prisma.regraEstorno.updateMany({
+    where: { id: { in: atrasadas.map((regra) => regra.id) } },
+    data: { vigenteDe: inicio },
+  });
+
+  await registrarAuditoria({
+    acao: "MUDANCA_PERCENTUAL",
+    entidade: "RegraEstorno",
+    descricao:
+      `Vigência de ${atrasadas.length} regra(s) de estorno recuada para ` +
+      `${inicio.toISOString().slice(0, 10)}, para alcançar os cancelamentos já importados. ` +
+      "Nenhum percentual ou limite foi alterado.",
+    dadosAntes: { regras: atrasadas },
+    dadosDepois: { vigenteDe: inicio },
+    usuario,
+  });
+
+  return { ajustadas: atrasadas.length, inicio };
+}
+
+/** Data da venda mais antiga importada — a âncora de "desde sempre". */
+async function primeiraVendaDaBase(): Promise<Date> {
+  const { _min } = await prisma.cota.aggregate({ _min: { dataVenda: true } });
+  const referencia = _min.dataVenda ?? new Date();
+  return new Date(
+    Date.UTC(referencia.getUTCFullYear(), referencia.getUTCMonth(), referencia.getUTCDate()),
+  );
 }

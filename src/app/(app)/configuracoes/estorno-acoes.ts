@@ -5,6 +5,7 @@ import { z } from "zod";
 import { exigirPermissao } from "@/server/auth/session";
 import { parseValorBr } from "@/lib/normalize";
 import {
+  ajustarVigenciaDasRegras,
   encerrarRegraEstorno,
   salvarRegraEstorno,
 } from "@/modules/apuracao/application/use-cases/configurar-regra-estorno";
@@ -93,4 +94,45 @@ export async function acaoEncerrarRegraEstorno(
 
   revalidatePath("/configuracoes");
   return { sucesso: "Regra encerrada. O histórico já apurado permanece intacto." };
+}
+
+/**
+ * Faz as regras de estorno já cadastradas alcançarem o histórico.
+ *
+ * A regra é resolvida pela data do CANCELAMENTO. Cadastrada depois da
+ * importação — que é o caso normal, porque a base vem primeiro —, ela começa a
+ * valer no dia do cadastro e não encontra nenhum cancelamento anterior: a
+ * apuração responde "sem regra vigente" e não cobra ninguém.
+ *
+ * Só recua a data. Percentual e limite de parcelas ficam como estão, e período
+ * já encerrado não é tocado.
+ */
+export async function acaoAjustarVigenciaDasRegras(
+  _anterior: EstadoAcao,
+  _formData: FormData,
+): Promise<EstadoAcao> {
+  const sessao = await exigirPermissao("tabelas", "editar");
+
+  try {
+    const resumo = await ajustarVigenciaDasRegras({ id: sessao.id, nome: sessao.nome });
+
+    revalidatePath("/configuracoes");
+    revalidatePath("/estornos");
+
+    if (resumo.ajustadas === 0) {
+      return {
+        sucesso:
+          "Nenhuma regra precisava de ajuste — todas já alcançam os cancelamentos importados.",
+      };
+    }
+
+    return {
+      sucesso:
+        `${resumo.ajustadas} regra(s) passaram a valer desde ` +
+        `${resumo.inicio.toLocaleDateString("pt-BR", { timeZone: "UTC" })}, que é a venda mais ` +
+        "antiga da base. Nenhum percentual foi alterado — agora clique em Apurar estornos.",
+    };
+  } catch (erro) {
+    return { erro: erro instanceof Error ? erro.message : "Falha ao ajustar a vigência." };
+  }
 }
