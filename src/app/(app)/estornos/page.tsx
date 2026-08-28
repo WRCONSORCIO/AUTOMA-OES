@@ -142,6 +142,10 @@ export default async function PaginaEstornos({
   ]);
 
   const totais = totalizarEstornos(linhas);
+  // Os indicadores respeitam o filtro de período; os avisos falam da base
+  // inteira. Sem dizer isso, um total baixo por causa do mês selecionado passa
+  // por "o cálculo não funcionou" — foi exatamente o que aconteceu.
+  const temPeriodo = Boolean(brutos.de || brutos.ate);
   const porDebito =
     origensDaBase.find((linha) => linha.origemBase === "DEBITO_DO_CANCELAMENTO")?._count._all ??
     0;
@@ -166,7 +170,7 @@ export default async function PaginaEstornos({
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Indicador
-          rotulo="Total a estornar"
+          rotulo={temPeriodo ? "A estornar no período" : "Total a estornar"}
           valor={formatarMoeda(totais.total)}
           detalhe={`${formatarNumero(totais.vendas)} venda(s) de ${formatarNumero(totais.pessoas)} vendedor(es)`}
           tom={totais.total > 0 ? "atencao" : "neutro"}
@@ -188,6 +192,15 @@ export default async function PaginaEstornos({
           tom={previsao.total > 0 ? "atencao" : "neutro"}
         />
       </section>
+
+      {temPeriodo ? (
+        <Aviso tom="marca">
+          Os quatro números acima contam apenas as cobranças cuja{" "}
+          <strong>data de débito</strong> cai no período filtrado. Os avisos abaixo e a tabela de
+          previsão falam da base inteira. Para ver tudo o que há a estornar, use{" "}
+          <strong>Limpar</strong> no filtro.
+        </Aviso>
+      ) : null}
 
       {semRegra > 0 ? (
         <Aviso tom="atencao">
