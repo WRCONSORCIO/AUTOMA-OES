@@ -1,12 +1,66 @@
 import "server-only";
 
+import type { CategoriaVendedor } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   encontrarRecuperacaoNaData,
   resolverCategoriaNaData,
 } from "@/server/domain/regras";
+import { sincronizarEstornos } from "@/modules/apuracao/application/sincronizar-estorno";
 import { registrarAuditoria } from "./auditoria";
+import { apurarComissoesEquipe } from "./comissao-equipe";
 import type { ContextoUsuario } from "./vendedores";
+
+/**
+ * Refaz o que depende de quem é o dono da venda.
+ *
+ * Trocar o vendedor de uma cota muda três coisas de uma vez: a categoria da
+ * venda, que é resolvida pelo histórico do novo dono; a marcação de
+ * recuperação; e a equipe e a gerência. Todas as três entram no cálculo.
+ *
+ * Sem esta reapuração, a comissão da equipe continuava creditada à pessoa
+ * ANTIGA e o estorno continuava calculado pela regra dela — a cota trocava de
+ * dono na tela e o dinheiro continuava indo para o lugar errado, em silêncio.
+ */
+/**
+ * Categoria e recuperação da venda sob o histórico de um outro vendedor.
+ *
+ * A categoria pertence à VENDA e é resolvida na data dela — mas pelo histórico
+ * de quem é o dono. Trocar o dono obriga a resolver de novo; manter a
+ * categoria do dono anterior faria a venda ser paga e cobrada por uma condição
+ * que nunca valeu para quem a fez.
+ */
+async function snapshotSobOutroVendedor(
+  vendedorId: string | null,
+  dataVenda: Date | null,
+): Promise<{ categoriaVenda: CategoriaVendedor | null; recuperacaoId: string | null }> {
+  if (!vendedorId || !dataVenda) return { categoriaVenda: null, recuperacaoId: null };
+
+  const [historico, recuperacoes] = await Promise.all([
+    prisma.vendedorCategoriaHistorico.findMany({
+      where: { vendedorId },
+      select: { categoria: true, vigenteDe: true, vigenteAte: true },
+    }),
+    prisma.vendedorRecuperacao.findMany({
+      where: { vendedorId, canceladaEm: null },
+      select: { id: true, dataInicio: true, dataFim: true },
+    }),
+  ]);
+
+  return {
+    categoriaVenda: resolverCategoriaNaData(historico, dataVenda),
+    recuperacaoId: encontrarRecuperacaoNaData(recuperacoes, dataVenda)?.id ?? null,
+  };
+}
+
+async function reapurarDepoisDaTroca(
+  cotaId: string,
+  usuario: ContextoUsuario,
+  origem: string,
+): Promise<void> {
+  await apurarComissoesEquipe({ cotaIds: [cotaId], registrarAuditoria: false });
+  await sincronizarEstornos([cotaId], { usuario, origem, auditarCadaCota: true });
+}
 
 export interface EntradaTransferencia {
   cotaId: string;
@@ -162,6 +216,8 @@ export async function transferirVendedor(
     },
     usuario,
   });
+
+  await reapurarDepoisDaTroca(cota.id, usuario, "transferência de vendedor");
 }
 
 /** Remove o override e devolve a cota ao vendedor informado pela administradora. */
@@ -178,6 +234,8 @@ export async function reverterTransferencia(
       cota: true,
       contrato: true,
       vendedorAdmId: true,
+      dataVenda: true,
+      emRecuperacao: true,
       vendedorEfetivo: { select: { id: true, nome: true } },
       override: { select: { id: true } },
       vendedorAdm: { select: { id: true, nome: true, equipeId: true, gerenciaId: true } },
@@ -187,6 +245,12 @@ export async function reverterTransferencia(
   if (!cota.override) {
     throw new Error("Esta cota não possui transferência interna para reverter.");
   }
+
+  // A ida resolveu a categoria pelo histórico de quem recebeu a cota; a volta
+  // precisa resolver pelo de quem a recebe de volta. Sem isto a reversão
+  // devolvia a cota com a categoria do vendedor errado, e o número continuava
+  // torto depois de uma operação que existe justamente para desfazer.
+  const snapshot = await snapshotSobOutroVendedor(cota.vendedorAdmId, cota.dataVenda);
 
   await prisma.$transaction(async (tx) => {
     await tx.cotaVendedorOverride.delete({ where: { id: cota.override!.id } });
@@ -211,6 +275,27 @@ export async function reverterTransferencia(
         origemVendedor: cota.vendedorAdmId ? "ADMINISTRADORA" : "NAO_IDENTIFICADO",
         equipeId: cota.vendedorAdm?.equipeId ?? null,
         gerenciaId: cota.vendedorAdm?.gerenciaId ?? null,
+        categoriaVenda: snapshot.categoriaVenda,
+        // A marcação de recuperação só é acrescentada, nunca removida: ela diz
+        // que a venda FOI feita em recuperação, e isso não deixa de ter sido.
+        ...(snapshot.recuperacaoId
+          ? {
+              emRecuperacao: true,
+              recuperacaoId: snapshot.recuperacaoId,
+              recuperacaoFixadaEm: new Date(),
+            }
+          : {}),
+      },
+    });
+
+    await tx.comissaoRegistro.updateMany({
+      where: { cotaId: cota.id },
+      data: {
+        vendedorId: cota.vendedorAdmId,
+        origemVendedor: cota.vendedorAdmId ? "ADMINISTRADORA" : "NAO_IDENTIFICADO",
+        equipeId: cota.vendedorAdm?.equipeId ?? null,
+        gerenciaId: cota.vendedorAdm?.gerenciaId ?? null,
+        categoriaVenda: snapshot.categoriaVenda,
       },
     });
   });
@@ -220,7 +305,9 @@ export async function reverterTransferencia(
     entidade: "Cota",
     entidadeId: cota.id,
     descricao: `Transferência da cota ${cota.grupo}/${cota.cota} revertida para o vendedor da administradora`,
-    dadosDepois: { motivo },
+    dadosDepois: { motivo, categoriaVenda: snapshot.categoriaVenda },
     usuario,
   });
+
+  await reapurarDepoisDaTroca(cota.id, usuario, "reversão de transferência");
 }

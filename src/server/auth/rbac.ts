@@ -108,16 +108,30 @@ export interface EscopoDados {
   equipeId?: string;
 }
 
+/**
+ * Unidade impossível, usada quando o perfil é restrito e não há unidade.
+ *
+ * O cadastro exige gerência para o gerente e equipe para o supervisor, então
+ * na prática isso não acontece — mas a função devolvia escopo VAZIO nesse
+ * caso, que significa "vê tudo". Uma falha de cadastro, um seed ou uma
+ * correção direta no banco viraria acesso irrestrito, e ninguém perceberia:
+ * a tela funciona, só mostra demais.
+ *
+ * Perfil restrito sem unidade agora não vê nada. É o desfecho seguro: dá para
+ * notar e corrigir, enquanto o contrário não dá.
+ */
+const SEM_UNIDADE = "__sem_unidade__";
+
 export function escopoDoUsuario(usuario: {
   perfil: PerfilUsuario;
   gerenciaId: string | null;
   equipeId: string | null;
 }): EscopoDados {
-  if (usuario.perfil === "GERENTE" && usuario.gerenciaId) {
-    return { gerenciaId: usuario.gerenciaId };
+  if (usuario.perfil === "GERENTE") {
+    return { gerenciaId: usuario.gerenciaId ?? SEM_UNIDADE };
   }
-  if (usuario.perfil === "SUPERVISOR" && usuario.equipeId) {
-    return { equipeId: usuario.equipeId };
+  if (usuario.perfil === "SUPERVISOR") {
+    return { equipeId: usuario.equipeId ?? SEM_UNIDADE };
   }
   return {};
 }

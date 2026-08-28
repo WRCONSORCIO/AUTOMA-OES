@@ -358,11 +358,18 @@ export async function lerPdfComissao(arquivo: Buffer): Promise<ResultadoLeituraP
   const somaSeguroLida = arredondar(
     registros.reduce((total, registro) => total + (registro.valorSeguro ?? 0), 0),
   );
+  const somaDsrLida = arredondar(
+    registros.reduce((total, registro) => total + (registro.valorDsr ?? 0), 0),
+  );
 
+  // O VLR. COMISSAO do rodapé soma as TRÊS colunas de dinheiro: comissão, DSR
+  // e seguro. Comparar sem o DSR passa despercebido enquanto ele é zero, e
+  // acusa divergência falsa no primeiro mês em que não for — bem no relatório
+  // que move a folha e o estorno.
   const divergencia =
     totais.comissao === null
       ? null
-      : arredondar(totais.comissao - (somaComissaoLida + somaSeguroLida));
+      : arredondar(totais.comissao - (somaComissaoLida + somaDsrLida + somaSeguroLida));
 
   return {
     registros,
