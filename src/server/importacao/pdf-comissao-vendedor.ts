@@ -75,9 +75,18 @@ const LINHA_COTA =
 const LINHA_VALORES =
   /^\s*(\S+)\s+(.*?)\s{2,}([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+(-?[\d.]+,\d{2})-?\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{4})\s*$/;
 
-/** Linha 3: parcela (ausente na inclusão de plano) e as datas. */
+/**
+ * Linha 3: parcela (ausente na inclusão de plano) e as datas.
+ *
+ * A última coluna é a classificação do objeto, e ela NÃO é sempre uma letra:
+ * imóvel vem como `I`, móvel vem como dígito. Exigir letra fazia a linha não
+ * casar, e como é ela que fecha o registro — as três linhas só viram um
+ * lançamento quando a terceira chega —, o lançamento inteiro era descartado em
+ * silêncio. O efeito era todo o segmento de móveis sumir do relatório, e a
+ * única pista era a divergência contra o total impresso.
+ */
 const LINHA_DATAS =
-  /^\s*(\d{1,3})?\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}\/\d{2}\/\d{4}))?(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s*([A-Z])?\s*$/;
+  /^\s*(\d{1,3})?\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}\/\d{2}\/\d{4}))?(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s*([A-Z0-9])?\s*$/;
 
 const TOTAL_VENDEDOR = /Total\s+do\s+Vendedor\s*\.*:\s*(-?[\d.]+,\d{2})/i;
 const TOTAL_COMISSAO = /VLR\.\s*COMISSAO:\s*(-?[\d.]+,\d{2})/;

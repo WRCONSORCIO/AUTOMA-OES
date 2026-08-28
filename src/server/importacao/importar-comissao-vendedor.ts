@@ -117,13 +117,19 @@ export async function importarComissaoVendedorPdf(
             hashArquivo,
           });
 
+          // O total é o do ARQUIVO, não o do que foi gravado agora. Somar só
+          // as linhas novas fazia uma reimportação — em que tudo é duplicado —
+          // mostrar R$ 0,00, como se o relatório estivesse vazio, ao lado de
+          // uma divergência contra o total impresso. O usuário lê isso como
+          // falha de leitura, e não é: é o arquivo já estar inteiro no sistema.
+          valorTotal += registro.valorComissao;
+
           if (gravado.duplicado) {
             contadores.duplicados += 1;
             continue;
           }
 
           contadores.criados += 1;
-          valorTotal += registro.valorComissao;
           if (!vendedor) contadores.semVendedorCadastrado += 1;
           if (!cota) contadores.semCotaVinculada += 1;
         } catch (erro) {
