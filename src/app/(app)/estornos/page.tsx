@@ -66,6 +66,7 @@ export default async function PaginaEstornos({
     pessoas,
     semRegra,
     semBase,
+    coberturaCv069,
     aguardando,
     previsao,
   ] = await Promise.all([
@@ -112,6 +113,17 @@ export default async function PaginaEstornos({
     prisma.estorno.count({
       where: { OR: [{ valorReferencia: 0 }, { valorReferencia: null }] },
     }),
+    // Quanto do relatório de comissão paga direto ao vendedor já entrou.
+    //
+    // É a ÚNICA fonte da base do estorno em venda de veterano e expert, e sem
+    // ela toda cobrança dessas categorias sai zerada. É o sintoma que mais
+    // confunde: a regra está certa, a venda está certa, e o valor é zero. Sem
+    // este número na tela, o usuário não tem como saber se o arquivo que ele
+    // subiu cobre o mês inteiro ou só um pedaço.
+    prisma.comissaoVendedorAdm.groupBy({
+      by: ["vendedorDocumento"],
+      _count: { _all: true },
+    }),
     // Cancelada na base de clientes, sem o débito no relatório de comissão.
     // Não é erro nem cadastro faltando: a administradora ainda não devolveu a
     // cobrança à WR, e até lá não há perda para repassar ao vendedor. Aparece
@@ -133,6 +145,7 @@ export default async function PaginaEstornos({
   ]);
 
   const totais = totalizarEstornos(linhas);
+  const linhasDoCv069 = coberturaCv069.reduce((soma, linha) => soma + linha._count._all, 0);
 
   return (
     <>
@@ -198,9 +211,27 @@ export default async function PaginaEstornos({
           registrada sobre essas vendas para servir de base. O estorno é uma
           porcentagem do que o vendedor recebeu — sem saber quanto ele recebeu,
           não há o que devolver. Em venda de veterano ou expert, quem paga é a
-          administradora: importe o relatório de{" "}
-          <strong>comissão paga direto ao vendedor</strong> em Importações e
-          apure de novo.
+          administradora, e a única fonte desse valor é o relatório de{" "}
+          <strong>comissão paga direto ao vendedor</strong>.{" "}
+          {coberturaCv069.length === 0 ? (
+            <>
+              Esse relatório <strong>ainda não foi importado</strong>: não há
+              comissão da administradora registrada para nenhum vendedor.
+              Enquanto ele não entrar, todo estorno de veterano e expert vai
+              sair zerado.
+            </>
+          ) : (
+            <>
+              Hoje há comissão da administradora registrada para apenas{" "}
+              <strong>
+                {formatarNumero(coberturaCv069.length)} vendedor(es)
+              </strong>
+              , em {formatarNumero(linhasDoCv069)} linha(s). Se o fechamento do
+              mês tem mais vendedores que isso, o arquivo importado está
+              parcial — suba o relatório completo em Importações e apure de
+              novo.
+            </>
+          )}
         </Aviso>
       ) : null}
 
