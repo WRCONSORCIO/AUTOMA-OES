@@ -53,10 +53,16 @@ export async function acaoReapurarBonus(
     if (resumo.semCota > 0) {
       partes.push(`${formatarNumero(resumo.semCota)} seguem sem cota na base`);
     }
+    if (resumo.peloVendedor > 0) {
+      partes.push(
+        `${formatarNumero(resumo.peloVendedor)} pegaram a gerência do cadastro do vendedor, ` +
+          `porque a venda foi importada antes de ele ter uma`,
+      );
+    }
     if (resumo.semGerencia > 0) {
       partes.push(
-        `${formatarNumero(resumo.semGerencia)} têm cota, mas a cota ainda não tem gerência — ` +
-          `apure as comissões para preencher a alocação das vendas`,
+        `${formatarNumero(resumo.semGerencia)} seguem sem gerência — nem a venda nem o vendedor ` +
+          `dela têm uma cadastrada`,
       );
     }
 

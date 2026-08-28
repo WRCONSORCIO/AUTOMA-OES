@@ -36,8 +36,10 @@ export interface ResumoReapuracaoBonus {
   atribuicoesAtualizadas: number;
   /** Continuam sem cota na base: essas o relatório trouxe e a base não tem. */
   semCota: number;
-  /** Têm cota, mas a cota não tem gerência — falta alocar o vendedor. */
+  /** Continuam sem gerência: nem a cota nem o vendedor dela têm uma. */
   semGerencia: number;
+  /** Gerência que veio do vendedor porque a cota não tinha a dela. */
+  peloVendedor: number;
 }
 
 export async function reapurarBonus(
@@ -49,6 +51,7 @@ export async function reapurarBonus(
     atribuicoesAtualizadas: 0,
     semCota: 0,
     semGerencia: 0,
+    peloVendedor: 0,
   };
 
   const lancamentos = await prisma.bonusIncentivo.findMany({
@@ -82,6 +85,9 @@ export async function reapurarBonus(
       vendedorEfetivoId: true,
       equipeId: true,
       gerenciaId: true,
+      // A alocação do VENDEDOR é o segundo caminho para a gerência, usado
+      // quando o snapshot da cota ficou vazio.
+      vendedorEfetivo: { select: { equipeId: true, gerenciaId: true } },
     },
   });
 
@@ -113,13 +119,23 @@ export async function reapurarBonus(
       continue;
     }
 
-    if (!cota.gerenciaId) resumo.semGerencia += 1;
+    // A cota é a primeira fonte: ela carrega a alocação congelada na venda,
+    // que é a resposta certa quando existe. Faltando, vale a alocação atual do
+    // vendedor — cadastrar a gerência de alguém depois da importação é o caso
+    // normal, e exigir que o snapshot da cota seja corrigido antes deixaria o
+    // bônus sem dono por um detalhe interno que ninguém vê na tela.
+    const doVendedor = cota.vendedorEfetivo;
+    const gerenciaId = cota.gerenciaId ?? doVendedor?.gerenciaId ?? null;
+    const equipeId = cota.gerenciaId ? cota.equipeId : (doVendedor?.equipeId ?? cota.equipeId);
+
+    if (!gerenciaId) resumo.semGerencia += 1;
+    else if (!cota.gerenciaId) resumo.peloVendedor += 1;
 
     const mudou =
       linha.cotaId !== cota.id ||
       linha.vendedorId !== cota.vendedorEfetivoId ||
-      linha.equipeId !== cota.equipeId ||
-      linha.gerenciaId !== cota.gerenciaId;
+      linha.equipeId !== equipeId ||
+      linha.gerenciaId !== gerenciaId;
 
     if (!mudou) continue;
 
@@ -128,12 +144,7 @@ export async function reapurarBonus(
 
     await prisma.bonusIncentivo.update({
       where: { id: linha.id },
-      data: {
-        cotaId: cota.id,
-        vendedorId: cota.vendedorEfetivoId,
-        equipeId: cota.equipeId,
-        gerenciaId: cota.gerenciaId,
-      },
+      data: { cotaId: cota.id, vendedorId: cota.vendedorEfetivoId, equipeId, gerenciaId },
     });
   }
 
