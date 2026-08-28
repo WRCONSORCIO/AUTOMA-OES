@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { calcularComissaoWr, recuperacaoAlcancaVenda } from "@/server/domain/regras";
 import { registrarAuditoria } from "./auditoria";
 import { apurarComissoesEquipe } from "./comissao-equipe";
+import { religarLancamentos } from "./religar-lancamentos";
 import { CacheVendedores, type ContextoUsuario } from "./vendedores";
 
 const TAMANHO_LOTE = 500;
@@ -66,6 +67,12 @@ export async function recalcularComissoes(
   };
 
   const cache = new CacheVendedores(prisma);
+
+  // Religar vem antes de tudo: a contagem de parcelas recebidas, que decide
+  // quanto da comissão está liberado, procura os lançamentos pela cota. Linha
+  // importada antes da venda existir fica solta, e a venda parece nunca ter
+  // recebido parcela nenhuma.
+  await religarLancamentos();
 
   const cotasTocadas = await preencherSnapshotsDeCotas(cache, resumo, escopo);
   await recalcularLancamentos(cache, resumo, escopo);

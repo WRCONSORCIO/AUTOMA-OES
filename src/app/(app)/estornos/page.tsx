@@ -66,7 +66,7 @@ export default async function PaginaEstornos({
     pessoas,
     semRegra,
     semBase,
-    coberturaCv069,
+    origensDaBase,
     aguardando,
     previsao,
   ] = await Promise.all([
@@ -120,10 +120,7 @@ export default async function PaginaEstornos({
     // confunde: a regra está certa, a venda está certa, e o valor é zero. Sem
     // este número na tela, o usuário não tem como saber se o arquivo que ele
     // subiu cobre o mês inteiro ou só um pedaço.
-    prisma.comissaoVendedorAdm.groupBy({
-      by: ["vendedorDocumento"],
-      _count: { _all: true },
-    }),
+    prisma.estorno.groupBy({ by: ["origemBase"], _count: { _all: true } }),
     // Cancelada na base de clientes, sem o débito no relatório de comissão.
     // Não é erro nem cadastro faltando: a administradora ainda não devolveu a
     // cobrança à WR, e até lá não há perda para repassar ao vendedor. Aparece
@@ -145,7 +142,9 @@ export default async function PaginaEstornos({
   ]);
 
   const totais = totalizarEstornos(linhas);
-  const linhasDoCv069 = coberturaCv069.reduce((soma, linha) => soma + linha._count._all, 0);
+  const porDebito =
+    origensDaBase.find((linha) => linha.origemBase === "DEBITO_DO_CANCELAMENTO")?._count._all ??
+    0;
 
   return (
     <>
@@ -206,32 +205,23 @@ export default async function PaginaEstornos({
 
       {semBase > 0 ? (
         <Aviso tom="atencao">
-          {formatarNumero(semBase)} estorno(s) foram apurados com valor{" "}
-          <strong>zero</strong>: a regra manda cobrar, mas não há comissão
-          registrada sobre essas vendas para servir de base. O estorno é uma
-          porcentagem do que o vendedor recebeu — sem saber quanto ele recebeu,
-          não há o que devolver. Em venda de veterano ou expert, quem paga é a
-          administradora, e a única fonte desse valor é o relatório de{" "}
-          <strong>comissão paga direto ao vendedor</strong>.{" "}
-          {coberturaCv069.length === 0 ? (
-            <>
-              Esse relatório <strong>ainda não foi importado</strong>: não há
-              comissão da administradora registrada para nenhum vendedor.
-              Enquanto ele não entrar, todo estorno de veterano e expert vai
-              sair zerado.
-            </>
-          ) : (
-            <>
-              Hoje há comissão da administradora registrada para apenas{" "}
-              <strong>
-                {formatarNumero(coberturaCv069.length)} vendedor(es)
-              </strong>
-              , em {formatarNumero(linhasDoCv069)} linha(s). Se o fechamento do
-              mês tem mais vendedores que isso, o arquivo importado está
-              parcial — suba o relatório completo em Importações e apure de
-              novo.
-            </>
-          )}
+          {formatarNumero(semBase)} estorno(s) ficaram com valor{" "}
+          <strong>zero</strong>: a regra manda cobrar, mas o sistema não achou
+          nenhum valor para servir de base — nem comissão registrada, nem
+          débito no relatório. Sem saber quanto saiu, não há o que devolver.
+        </Aviso>
+      ) : null}
+
+      {porDebito > 0 ? (
+        <Aviso tom="marca">
+          Em {formatarNumero(porDebito)} estorno(s), a base é o valor que a
+          administradora <strong>tirou de volta</strong> no CANCELAMENTO DE
+          PLANO, e não o registro do que o vendedor recebeu. É o que acontece
+          quando a comissão daquela venda foi paga em um mês cujo relatório não
+          está no sistema — o que é normal em venda antiga. O número é o do
+          próprio relatório, então é defensável diante do vendedor; se você
+          importar o fechamento de comissão daquele mês, a base passa a ser o
+          pagamento e o valor é reapurado.
         </Aviso>
       ) : null}
 

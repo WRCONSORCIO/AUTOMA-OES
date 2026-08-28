@@ -674,6 +674,11 @@ model Estorno {
   parcelasPagasNoCancelamento Int
   dataCancelamento            DateTime @db.Date
   valorReferencia             Decimal? @db.Decimal(18, 2)
+  /// De onde saiu o valorReferencia: COMISSAO_WR, COMISSAO_ADMINISTRADORA,
+  /// DEBITO_DO_CANCELAMENTO ou SEM_BASE. Guardado porque a diferença entre
+  /// "o vendedor recebeu tanto" e "a administradora tirou tanto" é o que o
+  /// financeiro precisa saber para defender a cobrança diante do vendedor.
+  origemBase                  String?
   criadoEm                    DateTime @default(now())
 
   /// Qual dos dois tipos gerou este estorno.

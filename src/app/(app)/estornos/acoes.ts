@@ -36,8 +36,11 @@ export async function acaoApurarEstornos(
 
     const religou =
       resumo.religacao.religadas > 0
-        ? `${formatarNumero(resumo.religacao.religadas)} linha(s) de comissão paga ao vendedor ` +
-          `voltaram a apontar para a venda. `
+        ? `${formatarNumero(resumo.religacao.religadas)} lançamento(s) que estavam soltos ` +
+          `voltaram a apontar para a venda ` +
+          `(${formatarNumero(resumo.religacao.comissaoWr.religadas)} de comissão da WR, ` +
+          `${formatarNumero(resumo.religacao.comissaoVendedor.religadas)} de comissão do vendedor, ` +
+          `${formatarNumero(resumo.religacao.bonus.religadas)} de bônus). `
         : "";
 
     if (resumo.canceladasAvaliadas === 0) {
