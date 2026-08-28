@@ -5,6 +5,7 @@ import {
   type CategoriaVenda,
   type RegraEstornoVigente,
 } from "../../domain/rules/estorno";
+import { basesDoEstorno } from "../repositories/regras-estorno";
 
 /**
  * O que ainda vai ser cobrado, mas a administradora ainda não debitou.
@@ -89,16 +90,13 @@ export async function estornosPrevistos(
   if (canceladas.length === 0) return vazio();
 
   const cotaIds = canceladas.map((cota) => cota.id);
-  const [regras, base] = await Promise.all([
-    carregarRegras(),
-    comissaoPagaNasCotas(cotaIds),
-  ]);
+  const [regras, base] = await Promise.all([carregarRegras(), basesDoEstorno(cotaIds)]);
 
   const acumulado = new Map<string, PrevisaoDaPessoa>();
   let semEstorno = 0;
 
   for (const cota of canceladas) {
-    const valorReferencia = base.get(cota.id) ?? 0;
+    const valorReferencia = base.get(cota.id)?.valor ?? 0;
 
     const decisao = avaliarEstorno(
       {
@@ -210,48 +208,6 @@ async function carregarRegras(): Promise<RegraEstornoVigente[]> {
   });
 
   return linhas.map((linha) => ({ ...linha, percentual: Number(linha.percentual) }));
-}
-
-/**
- * Comissão paga em cada cota, nas duas origens, em duas consultas.
- *
- * Iniciante a WR liberou pela ComissaoEquipe; veterano e expert a
- * administradora pagou direto, e isso vive na ComissaoVendedorAdm. O estorno é
- * porcentagem do que saiu, então as duas somam.
- */
-async function comissaoPagaNasCotas(cotaIds: readonly string[]): Promise<Map<string, number>> {
-  const mapa = new Map<string, number>();
-  if (cotaIds.length === 0) return mapa;
-
-  const ids = [...cotaIds];
-
-  const [daEquipe, daAdministradora] = await Promise.all([
-    prisma.comissaoEquipe.groupBy({
-      by: ["cotaId"],
-      where: { cotaId: { in: ids }, papel: "VENDEDOR" },
-      _sum: { valorLiberado: true },
-    }),
-    prisma.comissaoVendedorAdm.groupBy({
-      by: ["cotaId"],
-      where: { cotaId: { in: ids } },
-      _sum: { valorComissao: true, valorDsr: true, valorSeguro: true },
-    }),
-  ]);
-
-  for (const linha of daEquipe) {
-    mapa.set(linha.cotaId, Number(linha._sum.valorLiberado ?? 0));
-  }
-
-  for (const linha of daAdministradora) {
-    if (!linha.cotaId) continue;
-    const adm =
-      Number(linha._sum.valorComissao ?? 0) +
-      Number(linha._sum.valorDsr ?? 0) +
-      Number(linha._sum.valorSeguro ?? 0);
-    mapa.set(linha.cotaId, (mapa.get(linha.cotaId) ?? 0) + adm);
-  }
-
-  return mapa;
 }
 
 function arredondar(valor: number): number {

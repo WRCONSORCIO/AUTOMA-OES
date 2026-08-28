@@ -5,7 +5,7 @@ import type { ContextoUsuario } from "@/server/services/vendedores";
 import type { ResultadoSincronizacao } from "../domain/rules/apuracao-estorno";
 import { avaliarEstorno, type CategoriaVenda } from "../domain/rules/estorno";
 import {
-  comissaoPagaNaCota,
+  basesDoEstorno,
   lancamentosDeCancelamento,
   regrasDoVendedor,
 } from "../infrastructure/repositories/regras-estorno";
@@ -52,7 +52,7 @@ export async function sincronizarEstornos(
 ): Promise<ResultadoSincronizacao[]> {
   if (cotaIds.length === 0) return [];
 
-  const [cotas, lancamentos] = await Promise.all([
+  const [cotas, lancamentos, bases] = await Promise.all([
     prisma.cota.findMany({
       where: { id: { in: [...cotaIds] } },
       select: {
@@ -67,6 +67,7 @@ export async function sincronizarEstornos(
       },
     }),
     lancamentosDeCancelamento(cotaIds),
+    basesDoEstorno(cotaIds),
   ]);
 
   const resultados: ResultadoSincronizacao[] = [];
@@ -113,10 +114,9 @@ export async function sincronizarEstornos(
       continue;
     }
 
-    const [regras, valorReferencia] = await Promise.all([
-      regrasDoVendedor(cota.vendedorEfetivoId),
-      comissaoPagaNaCota(cota.id),
-    ]);
+    const regras = await regrasDoVendedor(cota.vendedorEfetivoId);
+    const base = bases.get(cota.id) ?? { valor: 0, origem: "SEM_BASE" as const };
+    const valorReferencia = base.valor;
 
     // A regra é resolvida pela data do FATO — o cancelamento do cliente. Só
     // quando a base ainda não trouxe essa data é que vale a do lançamento:
@@ -163,6 +163,7 @@ export async function sincronizarEstornos(
       dataCobranca: lancamento.dataLancamento,
       comissaoRegistroId: lancamento.comissaoRegistroId,
       valorReferencia,
+      origemBase: base.origem,
       regraEstornoId: decisao.regraId,
       percentualAplicado: decisao.percentualAplicado,
       parcelaLimite: decisao.parcelaLimite,
