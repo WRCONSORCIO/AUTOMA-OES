@@ -20,11 +20,15 @@ import {
   Tr,
 } from "@/components/ui";
 import { Indicador } from "@/components/indicador";
-import { FiltrosPeriodo, lerParametrosFiltro } from "@/components/filtros-periodo";
+import {
+  FiltrosPeriodo,
+  lerParametrosFiltro,
+} from "@/components/filtros-periodo";
 import {
   estornosPorPessoa,
   totalizarEstornos,
 } from "@/modules/apuracao/infrastructure/queries/estornos-por-pessoa";
+import { estornosPrevistos } from "@/modules/apuracao/infrastructure/queries/estornos-previstos";
 import { BotaoApurarEstornos } from "./formularios";
 
 export const metadata: Metadata = { title: "Estornos" };
@@ -47,13 +51,24 @@ export default async function PaginaEstornos({
   const escopo = escopoDoUsuario(sessao);
 
   const brutos = await searchParams;
-  const parametros = lerParametrosFiltro(brutos, { de: new Date(0), ate: new Date() });
+  const parametros = lerParametrosFiltro(brutos, {
+    de: new Date(0),
+    ate: new Date(),
+  });
 
   const de = brutos.de ? parseDataBr(parametros.de) : undefined;
   const ate = brutos.ate ? parseDataBr(parametros.ate) : undefined;
 
-  const [linhas, gerencias, equipes, pessoas, semRegra, semBase, aguardando] =
-    await Promise.all([
+  const [
+    linhas,
+    gerencias,
+    equipes,
+    pessoas,
+    semRegra,
+    semBase,
+    aguardando,
+    previsao,
+  ] = await Promise.all([
     estornosPorPessoa({
       de: de ?? undefined,
       ate: ate ?? undefined,
@@ -94,7 +109,9 @@ export default async function PaginaEstornos({
     // registro de comissão paga sobre a venda. Para veterano e expert isso
     // quase sempre significa que o relatório de comissão paga direto ao
     // vendedor ainda não foi importado — sem ele não há de onde tirar o valor.
-    prisma.estorno.count({ where: { OR: [{ valorReferencia: 0 }, { valorReferencia: null }] } }),
+    prisma.estorno.count({
+      where: { OR: [{ valorReferencia: 0 }, { valorReferencia: null }] },
+    }),
     // Cancelada na base de clientes, sem o débito no relatório de comissão.
     // Não é erro nem cadastro faltando: a administradora ainda não devolveu a
     // cobrança à WR, e até lá não há perda para repassar ao vendedor. Aparece
@@ -104,6 +121,14 @@ export default async function PaginaEstornos({
         situacao: "CANCELADO",
         comissoes: { none: { tipo: "CANCELAMENTO_DE_PLANO" } },
       },
+    }),
+    // A previsão não é filtrada por data: ela responde "o que vem vindo", e
+    // vir vindo não tem competência ainda. Filtrar por mês esconderia
+    // justamente o que o mês seguinte vai trazer.
+    estornosPrevistos({
+      pessoaId: parametros.pessoa,
+      equipeId: escopo.equipeId ?? parametros.equipe,
+      gerenciaId: escopo.gerenciaId ?? parametros.gerencia,
     }),
   ]);
 
@@ -145,112 +170,242 @@ export default async function PaginaEstornos({
           detalhe="Cancelamento com parcelas pagas abaixo do limite da regra"
         />
         <Indicador
-          rotulo="Aguardando a administradora"
-          valor={formatarNumero(aguardando)}
-          detalhe="Canceladas na base, sem CANCELAMENTO DE PLANO no relatório ainda"
+          rotulo="Previsto, ainda não cobrado"
+          valor={formatarMoeda(previsao.total)}
+          detalhe={`${formatarNumero(aguardando)} cancelada(s) aguardando o débito da administradora`}
+          tom={previsao.total > 0 ? "atencao" : "neutro"}
         />
       </section>
 
       {semRegra > 0 ? (
         <Aviso tom="atencao">
-          {formatarNumero(semRegra)} venda(s) já tiveram o <strong>CANCELAMENTO DE PLANO</strong>{" "}
-          lançado pela administradora e mesmo assim não geraram estorno. Duas causas possíveis, e
-          vale checar as duas: pode faltar regra vigente para a categoria da venda e a data do
-          cancelamento — cadastre em <strong>Administração → Regras e percentuais</strong> — ou as
-          regras podem ter sido cadastradas <strong>depois</strong> da importação, e aí ninguém
-          reavaliou os cancelamentos que já estavam na base. Nesse caso é só clicar em{" "}
-          <strong>Apurar estornos</strong> aqui em cima.
+          {formatarNumero(semRegra)} venda(s) já tiveram o{" "}
+          <strong>CANCELAMENTO DE PLANO</strong> lançado pela administradora e
+          mesmo assim não geraram estorno. Duas causas possíveis, e vale checar
+          as duas: pode faltar regra vigente para a categoria da venda e a data
+          do cancelamento — cadastre em{" "}
+          <strong>Administração → Regras e percentuais</strong> — ou as regras
+          podem ter sido cadastradas <strong>depois</strong> da importação, e aí
+          ninguém reavaliou os cancelamentos que já estavam na base. Nesse caso
+          é só clicar em <strong>Apurar estornos</strong> aqui em cima.
         </Aviso>
       ) : null}
 
       {semBase > 0 ? (
         <Aviso tom="atencao">
-          {formatarNumero(semBase)} estorno(s) foram apurados com valor <strong>zero</strong>: a
-          regra manda cobrar, mas não há comissão registrada sobre essas vendas para servir de
-          base. O estorno é uma porcentagem do que o vendedor recebeu — sem saber quanto ele
-          recebeu, não há o que devolver. Em venda de veterano ou expert, quem paga é a
-          administradora: importe o relatório de <strong>comissão paga direto ao vendedor</strong>{" "}
-          em Importações e apure de novo.
+          {formatarNumero(semBase)} estorno(s) foram apurados com valor{" "}
+          <strong>zero</strong>: a regra manda cobrar, mas não há comissão
+          registrada sobre essas vendas para servir de base. O estorno é uma
+          porcentagem do que o vendedor recebeu — sem saber quanto ele recebeu,
+          não há o que devolver. Em venda de veterano ou expert, quem paga é a
+          administradora: importe o relatório de{" "}
+          <strong>comissão paga direto ao vendedor</strong> em Importações e
+          apure de novo.
         </Aviso>
       ) : null}
 
-      <Card>
-        <CardContent className="p-0">
-          <Tabela>
-            <Cabecalho>
-              <tr>
-                <Th>Vendedor</Th>
-                <Th className="text-right">Recuperação</Th>
-                <Th className="text-right">Cancelamento</Th>
-                <Th className="text-right">Total a estornar</Th>
-                <Th>Ver vendas</Th>
-              </tr>
-            </Cabecalho>
-            <tbody>
-              {linhas.length === 0 ? (
-                <TabelaVazia colunas={5} mensagem="Nenhum estorno apurado no período." />
-              ) : (
-                linhas.map((linha) => (
-                  <Tr key={linha.pessoaId ?? "sem-vendedor"}>
-                    <Td>
-                      {linha.pessoaNome}
-                      {linha.pessoaId === null ? (
-                        <Badge tom="atencao" className="ml-2">
-                          sem vínculo
-                        </Badge>
-                      ) : null}
-                    </Td>
-                    <Td className="numerico text-right">
-                      {linha.qtdRecuperacao > 0 ? (
-                        <>
-                          {formatarMoeda(linha.valorRecuperacao)}
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">
+            A cobrar — já debitado pela administradora
+          </h2>
+          <p className="text-sm text-[var(--color-texto-2)]">
+            O dinheiro já saiu da WR. Estes valores podem entrar na folha do
+            mês.
+          </p>
+        </div>
+
+        <Card>
+          <CardContent className="p-0">
+            <Tabela>
+              <Cabecalho>
+                <tr>
+                  <Th>Vendedor</Th>
+                  <Th className="text-right">Recuperação</Th>
+                  <Th className="text-right">Cancelamento</Th>
+                  <Th className="text-right">Total a estornar</Th>
+                  <Th>Ver vendas</Th>
+                </tr>
+              </Cabecalho>
+              <tbody>
+                {linhas.length === 0 ? (
+                  <TabelaVazia
+                    colunas={5}
+                    mensagem="Nenhum estorno apurado no período."
+                  />
+                ) : (
+                  linhas.map((linha) => (
+                    <Tr key={linha.pessoaId ?? "sem-vendedor"}>
+                      <Td>
+                        {linha.pessoaNome}
+                        {linha.pessoaId === null ? (
+                          <Badge tom="atencao" className="ml-2">
+                            sem vínculo
+                          </Badge>
+                        ) : null}
+                      </Td>
+                      <Td className="numerico text-right">
+                        {linha.qtdRecuperacao > 0 ? (
+                          <>
+                            {formatarMoeda(linha.valorRecuperacao)}
+                            <span className="block text-xs text-[var(--color-texto-3)]">
+                              {formatarNumero(linha.qtdRecuperacao)} venda(s)
+                            </span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </Td>
+                      <Td className="numerico text-right">
+                        {linha.qtdCancelamento > 0 ? (
+                          <>
+                            {formatarMoeda(linha.valorCancelamento)}
+                            <span className="block text-xs text-[var(--color-texto-3)]">
+                              {formatarNumero(linha.qtdCancelamento)} venda(s)
+                            </span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </Td>
+                      <Td className="numerico text-right font-medium">
+                        {formatarMoeda(linha.valorTotal)}
+                      </Td>
+                      <Td>
+                        {linha.pessoaId ? (
+                          <Link
+                            href={`/clientes?pessoa=${linha.pessoaId}&estorno=QUALQUER`}
+                            className="text-[var(--color-marca-forte)] hover:underline"
+                          >
+                            Abrir na carteira
+                          </Link>
+                        ) : (
+                          <Link
+                            href="/clientes?estorno=QUALQUER"
+                            className="text-[var(--color-marca-forte)] hover:underline"
+                          >
+                            Abrir na carteira
+                          </Link>
+                        )}
+                      </Td>
+                    </Tr>
+                  ))
+                )}
+              </tbody>
+            </Tabela>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">
+            Previsão — ainda não cobrado
+          </h2>
+          <p className="text-sm text-[var(--color-texto-2)]">
+            Vendas já canceladas na base de clientes cujo{" "}
+            <strong>CANCELAMENTO DE PLANO</strong> ainda não apareceu no
+            relatório da administradora. Não é cobrança: é o que vem vindo,
+            calculado pelas mesmas regras. Serve para não pagar hoje o valor
+            cheio de quem tem estorno a caminho.
+          </p>
+        </div>
+
+        {previsao.semBase > 0 ? (
+          <Aviso tom="atencao">
+            {formatarNumero(previsao.semBase)} destas vendas ainda não têm
+            comissão registrada para servir de base, então entram valendo zero.{" "}
+            <strong>A previsão real é maior</strong> — importe o relatório de
+            comissão paga direto ao vendedor para fechá-la.
+          </Aviso>
+        ) : null}
+
+        <Card>
+          <CardContent className="p-0">
+            <Tabela>
+              <Cabecalho>
+                <tr>
+                  <Th>Vendedor</Th>
+                  <Th className="text-right">Recuperação</Th>
+                  <Th className="text-right">Cancelamento</Th>
+                  <Th className="text-right">Previsto</Th>
+                  <Th>Ver vendas</Th>
+                </tr>
+              </Cabecalho>
+              <tbody>
+                {previsao.linhas.length === 0 ? (
+                  <TabelaVazia
+                    colunas={5}
+                    mensagem={
+                      aguardando > 0
+                        ? "Nenhuma das canceladas em espera gera estorno pelas regras de hoje."
+                        : "Não há cancelamento aguardando o débito da administradora."
+                    }
+                  />
+                ) : (
+                  previsao.linhas.map((linha) => (
+                    <Tr key={linha.pessoaId ?? "sem-vendedor-previsto"}>
+                      <Td>
+                        {linha.pessoaNome}
+                        {linha.pessoaId === null ? (
+                          <Badge tom="atencao" className="ml-2">
+                            sem vínculo
+                          </Badge>
+                        ) : null}
+                        {linha.semBase > 0 ? (
                           <span className="block text-xs text-[var(--color-texto-3)]">
-                            {formatarNumero(linha.qtdRecuperacao)} venda(s)
+                            {formatarNumero(linha.semBase)} sem base de comissão
+                            conhecida
                           </span>
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </Td>
-                    <Td className="numerico text-right">
-                      {linha.qtdCancelamento > 0 ? (
-                        <>
-                          {formatarMoeda(linha.valorCancelamento)}
-                          <span className="block text-xs text-[var(--color-texto-3)]">
-                            {formatarNumero(linha.qtdCancelamento)} venda(s)
-                          </span>
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </Td>
-                    <Td className="numerico text-right font-medium">
-                      {formatarMoeda(linha.valorTotal)}
-                    </Td>
-                    <Td>
-                      {linha.pessoaId ? (
+                        ) : null}
+                      </Td>
+                      <Td className="numerico text-right">
+                        {linha.qtdRecuperacao > 0 ? (
+                          <>
+                            {formatarMoeda(linha.valorRecuperacao)}
+                            <span className="block text-xs text-[var(--color-texto-3)]">
+                              {formatarNumero(linha.qtdRecuperacao)} venda(s)
+                            </span>
+                          </>
+                        ) : (
+                          "\u2014"
+                        )}
+                      </Td>
+                      <Td className="numerico text-right">
+                        {linha.qtdCancelamento > 0 ? (
+                          <>
+                            {formatarMoeda(linha.valorCancelamento)}
+                            <span className="block text-xs text-[var(--color-texto-3)]">
+                              {formatarNumero(linha.qtdCancelamento)} venda(s)
+                            </span>
+                          </>
+                        ) : (
+                          "\u2014"
+                        )}
+                      </Td>
+                      <Td className="numerico text-right font-medium">
+                        {formatarMoeda(linha.valorTotal)}
+                      </Td>
+                      <Td>
                         <Link
-                          href={`/clientes?pessoa=${linha.pessoaId}&estorno=QUALQUER`}
+                          href={
+                            linha.pessoaId
+                              ? `/clientes?pessoa=${linha.pessoaId}&situacao=CANCELADO`
+                              : "/clientes?situacao=CANCELADO"
+                          }
                           className="text-[var(--color-marca-forte)] hover:underline"
                         >
                           Abrir na carteira
                         </Link>
-                      ) : (
-                        <Link
-                          href="/clientes?estorno=QUALQUER"
-                          className="text-[var(--color-marca-forte)] hover:underline"
-                        >
-                          Abrir na carteira
-                        </Link>
-                      )}
-                    </Td>
-                  </Tr>
-                ))
-              )}
-            </tbody>
-          </Tabela>
-        </CardContent>
-      </Card>
+                      </Td>
+                    </Tr>
+                  ))
+                )}
+              </tbody>
+            </Tabela>
+          </CardContent>
+        </Card>
+      </section>
     </>
   );
 }
