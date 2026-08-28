@@ -6,8 +6,17 @@ import {
   resumirApuracao,
   type ResumoApuracaoEstornos,
 } from "../domain/rules/apuracao-estorno";
+import {
+  religarComissaoVendedorAdm,
+  type ResumoReligacao,
+} from "@/server/services/comissao-vendedor-adm";
 import { cotasComCancelamentoLancado } from "../infrastructure/repositories/regras-estorno";
 import { sincronizarEstornos } from "./sincronizar-estorno";
+
+export type ResumoApuracao = ResumoApuracaoEstornos & {
+  /** Linhas do CV069E que estavam soltas e voltaram a apontar para a venda. */
+  religacao: ResumoReligacao;
+};
 
 export type { ResumoApuracaoEstornos };
 
@@ -101,7 +110,14 @@ export async function reavaliarEstornos(
 export async function apurarEstornos(
   usuario: ContextoUsuario | null,
   escopo: { cotaIds?: readonly string[] } = {},
-): Promise<ResumoApuracaoEstornos> {
+): Promise<ResumoApuracao> {
+  // Antes de qualquer conta: religar as linhas de comissão paga direto ao
+  // vendedor que ficaram soltas da cota. É a base do estorno de veterano e
+  // expert, e linha órfã faz a cobrança sair zerada sem nada parecer errado.
+  // Vem primeiro porque apurar sobre uma base incompleta grava valores que
+  // teriam de ser refeitos logo em seguida.
+  const religacao = await religarComissaoVendedorAdm();
+
   const alvo = new Set<string>(escopo.cotaIds ?? []);
 
   if (!escopo.cotaIds) {
@@ -121,7 +137,7 @@ export async function apurarEstornos(
     origem: "apuração de estornos",
   });
 
-  const resumo = resumirApuracao(resultados);
+  const resumo = { ...resumirApuracao(resultados), religacao };
 
   if (usuario) {
     await registrarAuditoria({
@@ -131,7 +147,8 @@ export async function apurarEstornos(
         `Apuração de estornos sobre ${resumo.canceladasAvaliadas} venda(s): ` +
         `${resumo.criados} criado(s), ${resumo.atualizados} atualizado(s), ` +
         `${resumo.removidos} removido(s), ` +
-        `${resumo.semEstorno.aguardandoLancamento} aguardando lançamento da administradora. ` +
+        `${resumo.semEstorno.aguardandoLancamento} aguardando lançamento da administradora, ` +
+        `${religacao.religadas} linha(s) de comissão religadas à venda. ` +
         `Total ${resumo.valorTotal.toFixed(2)}.`,
       dadosDepois: resumo,
       usuario,
