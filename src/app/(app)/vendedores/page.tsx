@@ -6,8 +6,13 @@ import { exigirPermissao } from "@/server/auth/session";
 import { escopoDoUsuario, podeAcessar } from "@/server/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatarDocumento } from "@/lib/normalize";
-import { formatarData, formatarMoeda, formatarNumero } from "@/lib/format";
-import { digitosDaBusca, inteiro, texto, type ParametrosBusca } from "@/lib/filtros";
+import { formatarMoeda, formatarNumero } from "@/lib/format";
+import {
+  digitosDaBusca,
+  inteiro,
+  texto,
+  type ParametrosBusca,
+} from "@/lib/filtros";
 import {
   Aviso,
   Badge,
@@ -26,6 +31,7 @@ import {
   Th,
   Tr,
 } from "@/components/ui";
+import { Abas, lerAba, type Aba } from "@/components/abas";
 import { Paginacao } from "@/components/paginacao";
 import { NovoVendedor } from "./novo-vendedor";
 import { avaliarPessoas } from "@/modules/comercial/application/use-cases/aptos-promocao";
@@ -40,6 +46,9 @@ const TOM_CATEGORIA = {
   VETERANO: "marca",
   EXPERT: "bom",
 } as const;
+
+const ATIVOS = "ativos";
+const FORA = "fora";
 
 /**
  * A lista é de pessoas, não de documentos.
@@ -60,13 +69,28 @@ export default async function PaginaVendedores({
   const pagina = inteiro(brutos, "pagina", 1);
   const busca = texto(brutos, "q");
   const categoria = texto(brutos, "categoria");
-  const situacao = texto(brutos, "situacao");
+  // A aba é lida antes dos filtros porque manda em um deles: o motivo da saída
+  // só existe para quem saiu.
+  const aba = lerAba(brutos, [
+    { chave: ATIVOS, rotulo: "" },
+    { chave: FORA, rotulo: "" },
+  ]);
+  const situacao = aba === FORA ? texto(brutos, "situacao") : null;
+
+  // O que o usuário tem direito de enxergar. Fica separado dos filtros que ele
+  // escolhe porque a aba é derivada dele — e só dele: misturar a situação
+  // escolhida no formulário aqui faria "quem não tem nenhum documento ativo"
+  // virar "quem não tem nenhum documento desligado E ativo", que é sempre
+  // verdade e traria os ativos de volta para a aba errada.
+  const escopoDocumento: Prisma.VendedorWhereInput = {
+    ...(escopo.gerenciaId ? { gerenciaId: escopo.gerenciaId } : {}),
+    ...(escopo.equipeId ? { equipeId: escopo.equipeId } : {}),
+  };
 
   // Os filtros valem sobre os documentos: basta um deles atender para a pessoa
   // entrar na lista.
   const filtroDocumento: Prisma.VendedorWhereInput = {
-    ...(escopo.gerenciaId ? { gerenciaId: escopo.gerenciaId } : {}),
-    ...(escopo.equipeId ? { equipeId: escopo.equipeId } : {}),
+    ...escopoDocumento,
     ...(categoria ? { categoriaAtual: categoria as "INICIANTE" } : {}),
     ...(situacao ? { situacao: situacao as "ATIVO" } : {}),
   };
@@ -81,17 +105,53 @@ export default async function PaginaVendedores({
     ? {
         OR: [
           { nome: { contains: busca, mode: "insensitive" } },
-          { documentos: { some: { nome: { contains: busca, mode: "insensitive" } } } },
+          {
+            documentos: {
+              some: { nome: { contains: busca, mode: "insensitive" } },
+            },
+          },
           // Só quando o termo tem dígitos: sem esta guarda, buscar por nome
           // resultava em `contains: ""`, que casa com tudo e anulava o filtro.
-          ...(digitos ? [{ documentos: { some: { cpfCnpj: { contains: digitos } } } }] : []),
+          ...(digitos
+            ? [{ documentos: { some: { cpfCnpj: { contains: digitos } } } }]
+            : []),
         ],
       }
     : {};
 
-  const where: Prisma.PessoaWhereInput = {
+  /**
+   * Quem está operando e quem não está.
+   *
+   * A pessoa é ativa quando OPERA por pelo menos um documento — quem tem o CPF
+   * antigo desligado e o CNPJ novo ativo continua vendendo, e some da lista de
+   * trabalho se a conta for feita por documento. A separação é feita aqui, no
+   * banco, e não depois de paginar: filtrar as 50 linhas já trazidas daria
+   * páginas de tamanhos aleatórios e um total que não corresponde ao que se vê.
+   */
+  const operando: Prisma.PessoaWhereInput = {
+    documentos: { some: { ...escopoDocumento, situacao: "ATIVO" } },
+  };
+  const forasDeOperacao: Prisma.PessoaWhereInput = {
+    documentos: { none: { ...escopoDocumento, situacao: "ATIVO" } },
+  };
+
+  const filtroBase: Prisma.PessoaWhereInput = {
     documentos: { some: filtroDocumento },
     ...filtroBusca,
+  };
+
+  const [ativos, foras] = await Promise.all([
+    prisma.pessoa.count({ where: { AND: [filtroBase, operando] } }),
+    prisma.pessoa.count({ where: { AND: [filtroBase, forasDeOperacao] } }),
+  ]);
+
+  const ABAS: Aba[] = [
+    { chave: ATIVOS, rotulo: "Em operação", contador: ativos },
+    { chave: FORA, rotulo: "Desligados e inativos", contador: foras },
+  ];
+
+  const where: Prisma.PessoaWhereInput = {
+    AND: [filtroBase, aba === FORA ? forasDeOperacao : operando],
   };
 
   const [pessoas, total, semPessoa, equipes, gerencias] = await Promise.all([
@@ -101,12 +161,15 @@ export default async function PaginaVendedores({
         id: true,
         nome: true,
         documentos: {
+          // O mesmo recorte que decidiu a aba decide o que a linha mostra: sem
+          // isto um gerente veria, na coluna de documentos, cadastros de outra
+          // gerência — e a situação exibida podia contradizer a aba aberta.
+          where: escopoDocumento,
           select: {
             id: true,
             cpfCnpj: true,
             categoriaAtual: true,
             situacao: true,
-            dataEntradaWr: true,
             equipe: { select: { nome: true } },
             gerencia: { select: { nome: true } },
             _count: { select: { cotasEfetivas: true } },
@@ -122,7 +185,11 @@ export default async function PaginaVendedores({
     prisma.vendedor.count({ where: { pessoaId: null } }),
     prisma.equipe.findMany({
       where: { status: "ATIVO" },
-      select: { id: true, nome: true, gerencia: { select: { id: true, nome: true } } },
+      select: {
+        id: true,
+        nome: true,
+        gerencia: { select: { id: true, nome: true } },
+      },
       orderBy: { nome: "asc" },
     }),
     prisma.gerencia.findMany({
@@ -147,11 +214,6 @@ export default async function PaginaVendedores({
     );
     const principal = documentos[0];
 
-    const entradas = documentos
-      .map((documento) => documento.dataEntradaWr)
-      .filter((data): data is Date => data !== null)
-      .sort((a, b) => a.getTime() - b.getTime());
-
     return {
       id: pessoa.id,
       nome: pessoa.nome,
@@ -162,12 +224,12 @@ export default async function PaginaVendedores({
       // iniciante e um CNPJ novo como veterano já é veterano — usar o documento
       // mais movimentado o mostraria como iniciante para sempre.
       categoriaAtual:
-        categoriaDaPessoa(documentos.map((item) => item.categoriaAtual)) ?? "INICIANTE",
+        categoriaDaPessoa(documentos.map((item) => item.categoriaAtual)) ??
+        "INICIANTE",
       consolidado: porPessoa.get(pessoa.id) ?? null,
       equipeNome: documentos.find((item) => item.equipe)?.equipe?.nome ?? null,
-      gerenciaNome: documentos.find((item) => item.gerencia)?.gerencia?.nome ?? null,
-      entradaWr: entradas[0] ?? null,
-      cotas: documentos.reduce((soma, item) => soma + item._count.cotasEfetivas, 0),
+      gerenciaNome:
+        documentos.find((item) => item.gerencia)?.gerencia?.nome ?? null,
       // Ativo em qualquer documento é ativo: desligado é quem não opera por nenhum.
       situacao: documentos.some((item) => item.situacao === "ATIVO")
         ? "ATIVO"
@@ -186,8 +248,9 @@ export default async function PaginaVendedores({
 
       {semPessoa > 0 ? (
         <Aviso tom="atencao">
-          {formatarNumero(semPessoa)} cadastro(s) ainda não pertencem a nenhuma pessoa e por isso
-          não aparecem aqui. Abra <strong>Vínculos de vendedores</strong> para resolver.
+          {formatarNumero(semPessoa)} cadastro(s) ainda não pertencem a nenhuma
+          pessoa e por isso não aparecem aqui. Abra{" "}
+          <strong>Vínculos de vendedores</strong> para resolver.
         </Aviso>
       ) : null}
 
@@ -205,12 +268,18 @@ export default async function PaginaVendedores({
         </Card>
       ) : null}
 
+      <Abas abas={ABAS} ativa={aba} base="/vendedores" parametros={brutos} />
+
       <form
         action="/vendedores"
         className="flex flex-wrap items-end gap-3 rounded-[var(--radius-card)] border border-[var(--color-borda)] bg-[var(--color-superficie-2)] p-4"
       >
         <Campo rotulo="Busca" className="min-w-56 flex-1">
-          <Entrada name="q" defaultValue={busca ?? ""} placeholder="Nome ou CPF/CNPJ" />
+          <Entrada
+            name="q"
+            defaultValue={busca ?? ""}
+            placeholder="Nome ou CPF/CNPJ"
+          />
         </Campo>
         <Campo rotulo="Categoria" className="w-44">
           <Selecao name="categoria" defaultValue={categoria ?? ""}>
@@ -220,15 +289,22 @@ export default async function PaginaVendedores({
             <option value="EXPERT">Expert</option>
           </Selecao>
         </Campo>
-        <Campo rotulo="Situação" className="w-44">
-          <Selecao name="situacao" defaultValue={situacao ?? ""}>
-            <option value="">Todas</option>
-            <option value="ATIVO">Ativo</option>
-            <option value="AFASTADO">Afastado</option>
-            <option value="INATIVO">Inativo</option>
-            <option value="DESLIGADO">Desligado</option>
-          </Selecao>
-        </Campo>
+        {/* A aba já é a divisão por situação; dentro dos que saíram ainda
+            interessa distinguir o desligamento do afastamento. Na aba de quem
+            opera o campo só teria uma resposta possível. */}
+        {aba === FORA ? (
+          <Campo rotulo="Motivo da saída" className="w-44">
+            <Selecao name="situacao" defaultValue={situacao ?? ""}>
+              <option value="">Todos</option>
+              <option value="AFASTADO">Afastado</option>
+              <option value="INATIVO">Inativo</option>
+              <option value="DESLIGADO">Desligado</option>
+            </Selecao>
+          </Campo>
+        ) : null}
+        {/* O formulário navega por GET e recomeça a URL: sem isto, filtrar
+            dentro de uma aba devolvia o usuário para a primeira. */}
+        <input type="hidden" name="aba" value={aba} />
         <button
           type="submit"
           className="h-10 rounded-lg bg-[var(--color-marca)] px-4 text-sm font-medium text-white hover:bg-[var(--color-marca-forte)] dark:text-[#0b0b0b]"
@@ -248,14 +324,15 @@ export default async function PaginaVendedores({
                 <Th className="text-right">Vendido (carteira)</Th>
                 <Th>Equipe</Th>
                 <Th>Gerência</Th>
-                <Th>Entrada WR</Th>
-                <Th className="text-right">Cotas</Th>
                 <Th>Situação</Th>
               </tr>
             </Cabecalho>
             <tbody>
               {linhas.length === 0 ? (
-                <TabelaVazia colunas={9} mensagem="Nenhum vendedor encontrado." />
+                <TabelaVazia
+                  colunas={7}
+                  mensagem="Nenhum vendedor encontrado."
+                />
               ) : (
                 linhas.map((linha) => (
                   <Tr key={linha.id}>
@@ -270,7 +347,9 @@ export default async function PaginaVendedores({
                     <Td className="numerico whitespace-nowrap">
                       <div className="flex flex-col gap-0.5">
                         {linha.documentos.map((documento) => (
-                          <span key={documento.id}>{formatarDocumento(documento.cpfCnpj)}</span>
+                          <span key={documento.id}>
+                            {formatarDocumento(documento.cpfCnpj)}
+                          </span>
                         ))}
                       </div>
                     </Td>
@@ -289,16 +368,23 @@ export default async function PaginaVendedores({
                     <Td className="numerico text-right whitespace-nowrap">
                       {linha.consolidado ? (
                         <>
-                          <div>{formatarMoeda(linha.consolidado.volumeVendido)}</div>
+                          <div>
+                            {formatarMoeda(linha.consolidado.volumeVendido)}
+                          </div>
                           {linha.consolidado.aptidao.volumeMinimo !== null &&
                           !linha.consolidado.aptidao.apto ? (
                             <div className="text-xs text-[var(--color-texto-3)]">
-                              faltam {formatarMoeda(linha.consolidado.aptidao.faltam)}
+                              faltam{" "}
+                              {formatarMoeda(linha.consolidado.aptidao.faltam)}
                             </div>
                           ) : null}
                           {linha.consolidado.volumeEstornoTotal > 0 ? (
                             <div className="text-xs text-[var(--color-texto-3)]">
-                              −{formatarMoeda(linha.consolidado.volumeEstornoTotal)} estorno total
+                              −
+                              {formatarMoeda(
+                                linha.consolidado.volumeEstornoTotal,
+                              )}{" "}
+                              estorno total
                             </div>
                           ) : null}
                         </>
@@ -308,15 +394,17 @@ export default async function PaginaVendedores({
                     </Td>
                     <Td>{linha.equipeNome ?? "—"}</Td>
                     <Td>{linha.gerenciaNome ?? "—"}</Td>
-                    <Td className="whitespace-nowrap">{formatarData(linha.entradaWr)}</Td>
-                    <Td className="numerico text-right">{formatarNumero(linha.cotas)}</Td>
                     <Td>
                       <div className="flex flex-wrap gap-1">
-                        <Badge tom={linha.situacao === "ATIVO" ? "bom" : "neutro"}>
+                        <Badge
+                          tom={linha.situacao === "ATIVO" ? "bom" : "neutro"}
+                        >
                           {linha.situacao}
                         </Badge>
                         {linha.documentos.length > 1 ? (
-                          <Badge tom="marca">{linha.documentos.length} documentos</Badge>
+                          <Badge tom="marca">
+                            {linha.documentos.length} documentos
+                          </Badge>
                         ) : null}
                       </div>
                     </Td>
